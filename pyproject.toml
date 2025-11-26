@@ -7,4 +7,5 @@ requires-python = ">=3.13.0"
 dependencies = [
     "jupyter>=1.1.1",
     "lab>=8.5",
+    "regex>=2025.11.3",
 ]
