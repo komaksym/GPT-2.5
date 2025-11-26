@@ -12,3 +12,6 @@ wheels/
 .python-version
 
 .ipynb_checkpoints
+
+# Data is too big to fit
+/data
