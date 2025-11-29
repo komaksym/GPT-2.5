@@ -21,12 +21,15 @@ def strip_of_special_tokens(corpus, special_tokens):
     """Strips of special tokens to avoid counting them as bytes"""
 
     # Escape | delimiter in special tokens
-    for i in range(len(special_tokens)):
-        if "|" in special_tokens[i]:
-            special_tokens[i] = re.escape(special_tokens[i])
+    escaped_special_tokens = []
+    for token in special_tokens:
+        if "|" in token:
+            escaped_special_tokens.append(re.escape(token))
+        else:
+            escaped_special_tokens.append(token)
 
     # Join special tokens into a delim for a splitting pattern
-    delim = "|".join(special_tokens)
+    delim = "|".join(escaped_special_tokens)
     chunks = re.split(delim, corpus)
     # Remove empty chunks
     chunks = [ch for ch in chunks if ch.strip()]
@@ -58,42 +61,45 @@ def split_to_bytes(corpus):
     return counts
 
 
-def count_bytepairs(corpus, bp_to_counts=None, bp_to_words=None, mf_pair=None, merged_words=None):
+def count_bytepairs(corpus, bp_to_counts=None, bp_to_words=None, mf_pair=None, mf_pair_words=None, merged_words=None, removed_word_freqs=None):
     """Counts bytepair frequencies in the corpus
     If ran the first time (no counts provided) then count all byte pairs in the whole corpus
-    If ran consecutively, remove the most frequent pair count as it's merged now
-    and count byte pairs only on the merged words now"""
+    If ran consecutively, update counts based on removed words and new merged words"""
 
     # If counts are provided, update only the affected byte pairs
     if bp_to_counts and bp_to_words:
-        # Remove the merged pair itself
-        bp_to_counts.pop(mf_pair, None)
-        bp_to_words.pop(mf_pair, None)
+        # 1. Decrement counts for pairs in the words that are being removed (merged)
+        if removed_word_freqs:
+            for w, freq in removed_word_freqs.items():
+                # Find all pairs in w
+                current_pairs = []
+                for i in range(len(w) - 1):
+                    current_pairs.append((w[i], w[i+1]))
+                
+                # Decrement counts
+                for p in current_pairs:
+                    if p in bp_to_counts:
+                        bp_to_counts[p] -= freq
+                        if bp_to_counts[p] <= 0:
+                             if p in bp_to_counts: del bp_to_counts[p]
+                
+                # Remove w from bp_to_words for unique pairs
+                for p in set(current_pairs):
+                    if p in bp_to_words and w in bp_to_words[p]:
+                        bp_to_words[p].remove(w)
+                        if not bp_to_words[p]:
+                            del bp_to_words[p]
 
-        # Clean up word references: remove words that no longer exist in corpus
-        # and update counts for pairs that lost words
-        for pair in list(bp_to_words.keys()):
-            old_words = bp_to_words[pair]
-            # Find words that are no longer in corpus (they were merged)
-            removed_words = {w for w in old_words if w not in corpus}
-
-            if removed_words:
-                # Update the word set
-                bp_to_words[pair] = old_words - removed_words
-
-                # Recalculate count for this pair from remaining words
-                bp_to_counts[pair] = sum(corpus[w] for w in bp_to_words[pair])
-
-                # Remove empty sets
-                if not bp_to_words[pair]:
-                    bp_to_words.pop(pair)
-                    bp_to_counts.pop(pair, None)
-
-        # Add counts for new byte pairs in merged words
+        # 2. Add counts for new byte pairs in merged words
         for w in merged_words:
-            for c1, c2 in zip(w, w[1:]):
-                bp_to_counts[(c1, c2)] = bp_to_counts.get((c1, c2), 0) + corpus[w]
-                bp_to_words[(c1, c2)].add(w)
+            freq = corpus[w]
+            current_pairs = []
+            for i in range(len(w) - 1):
+                current_pairs.append((w[i], w[i+1]))
+            
+            for p in current_pairs:
+                bp_to_counts[p] = bp_to_counts.get(p, 0) + freq
+                bp_to_words[p].add(w)
 
     # For the first time we need to count every single pair
     else:
@@ -153,10 +159,11 @@ def merge(corpus, merge_pair, merge_pair_words):
         merged_words.add(tuple(new_k))
 
     # Pop the unmerged words
+    removed_word_freqs = {}
     for w in merge_pair_words:
-        corpus.pop(w)
+        removed_word_freqs[w] = corpus.pop(w)
 
-    return corpus, merged_words
+    return corpus, merged_words, removed_word_freqs
 
 
 def pair_to_bytes(pair):
@@ -164,11 +171,12 @@ def pair_to_bytes(pair):
 
 
 def train_bpe(input_path, vocab_size, special_tokens):
-    vocab = {}
+    vocab = {i: bytes([i]) for i in range(256)}
     merges = []
     mf_pair = None
     merged_words = None
-    num_of_merges = vocab_size - 256
+    removed_word_freqs = None
+    num_of_merges = vocab_size - 256 - len(special_tokens)
 
     corpus = read_data(input_path)
     corpus = strip_of_special_tokens(corpus, special_tokens)
@@ -182,25 +190,32 @@ def train_bpe(input_path, vocab_size, special_tokens):
             counts, counts_to_words = count_bytepairs(corpus)
         else:
             counts, counts_to_words = count_bytepairs(
-                corpus, counts, counts_to_words, mf_pair, merged_words
+                corpus, counts, counts_to_words, mf_pair, mf_pair_words, merged_words, removed_word_freqs
             )
-            # Check if there are any pairs left to merge
-            if not counts:
-                # No more pairs to merge, stop early
-                break
-            # Get the most frequent pair
-            mf_pair, mf_pair_words = get_mf_pair(counts, counts_to_words)
-            # Add merge to merges
-            pair_b = pair_to_bytes(mf_pair)
-            merges.append(pair_b)
-            # Add the merge to the vocab
-            merge_b = "".join(mf_pair).encode("utf-8")
-            vocab[256 + i] = merge_b
-            # Apply the merge to the corpus
-            corpus, merged_words = merge(corpus, "".join(mf_pair), mf_pair_words)
+        
+        # Check if there are any pairs left to merge
+        if not counts:
+            # No more pairs to merge, stop early
+            break
+            
+        # Get the most frequent pair
+        mf_pair, mf_pair_words = get_mf_pair(counts, counts_to_words)
+        # Add merge to merges
+        pair_b = pair_to_bytes(mf_pair)
+        merges.append(pair_b)
+        # Add the merge to the vocab
+        merge_b = "".join(mf_pair).encode("utf-8")
+        vocab[256 + i] = merge_b
+        # Apply the merge to the corpus
+        corpus, merged_words, removed_word_freqs = merge(corpus, "".join(mf_pair), mf_pair_words)
+
+    # Add special tokens to the vocab
+    for i, token in enumerate(special_tokens):
+        vocab[256 + num_of_merges + i] = token.encode("utf-8")
 
     return vocab, merges
 
 
 if __name__ == "__main__":
-    vocab, merges = train_bpe("data/TinyStoriesV2-GPT4-valid.txt", 262, special_tokens = ["<|endoftext|>", "<start>", "<end>"])
+    vocab, merges = train_bpe("tests/fixtures/corpus.en", 262, special_tokens = ["<|endoftext|>", "<start>", "<end>"])
+    print(vocab)
