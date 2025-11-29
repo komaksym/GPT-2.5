@@ -13,7 +13,7 @@ PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s
 
 def read_data(input_path):
     with open(input_path, "r") as f:
-        corpus = f.read()[:3000]
+        corpus = f.read()
     return corpus
 
 
