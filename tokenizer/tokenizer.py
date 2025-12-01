@@ -13,9 +13,11 @@ class Tokenizer:
 
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
+        """Loads vocab and merges from files"""
+
         gpt2_byte_decoder = {v: k for k, v in gpt2_bytes_to_unicode().items()}
 
-        # Merges
+        # De-serialize merges
         with open(merges_filepath, encoding="utf-8") as f:
             merges = [tuple(line.rstrip().split(" ")) for line in f]
             merges = [
@@ -26,7 +28,7 @@ class Tokenizer:
                 for merge_token_1, merge_token_2 in merges
             ]
 
-        # Vocab
+        # De-serialize vocab
         with open(vocab_filepath, encoding="utf-8") as f:
             gpt2_reference_vocab = json.load(f)
             vocab = {
@@ -40,7 +42,9 @@ class Tokenizer:
 
         pretok_pat = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
+        # Strip special tokens
         text = strip_of_special_tokens(text, self.special_tokens)
+        # Pretokenize
         pretokenized = re.findall(pretok_pat, text[0])
         encoded_str = []
 
@@ -65,6 +69,8 @@ class Tokenizer:
         return encoded_str
 
     def encode_iterable(self, iterable):
+        """Encodes from an iterable"""
+
         for text in iterable:
             yield(self.encode(text))
 
