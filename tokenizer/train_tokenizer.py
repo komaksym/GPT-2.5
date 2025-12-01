@@ -174,6 +174,7 @@ def train_bpe(input_path, vocab_size, special_tokens):
     vocab = {i: bytes([i]) for i in range(256)}
     merges = []
     mf_pair = None
+    mf_pair_words = None
     merged_words = None
     removed_word_freqs = None
     num_of_merges = vocab_size - 256 - len(special_tokens)
