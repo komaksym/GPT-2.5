@@ -62,7 +62,8 @@ class Tokenizer:
         return encoded_str
 
     def encode_iterable(self, iterable):
-        pass
+        for text in iterable:
+            yield(self.encode(text))
 
     def decode(self, ids):
         """Decodes a sequence of tokens to a string"""
