@@ -1,6 +1,6 @@
 import regex as re
-from .common import gpt2_bytes_to_unicode
-from .train_tokenizer import strip_of_special_tokens
+from tests.common import gpt2_bytes_to_unicode
+from tokenizer_train import strip_of_special_tokens
 import json
 
 
@@ -43,9 +43,10 @@ class Tokenizer:
         pretok_pat = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
         # Strip special tokens
-        text = strip_of_special_tokens(text, self.special_tokens)
+        if self.special_tokens:
+            text = strip_of_special_tokens(text, self.special_tokens)
         # Pretokenize
-        pretokenized = re.findall(pretok_pat, text[0])
+        pretokenized = re.findall(pretok_pat, text[0] if len(text) > 1 else text)
         encoded_str = []
 
         # Encode each word independently
