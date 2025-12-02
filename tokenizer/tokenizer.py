@@ -1,6 +1,6 @@
 import regex as re
-from tests.common import gpt2_bytes_to_unicode
-from tokenizer_train import strip_of_special_tokens
+from common import gpt2_bytes_to_unicode
+from train_tokenizer import strip_of_special_tokens
 import json
 
 
@@ -46,15 +46,15 @@ class Tokenizer:
         if self.special_tokens:
             text = strip_of_special_tokens(text, self.special_tokens)
         # Pretokenize
-        pretokenized = re.findall(pretok_pat, text[0] if len(text) > 1 else text)
+        pretokenized = re.findall(pretok_pat, text[0] if isinstance(text, list) else text)
         encoded_str = []
 
         # Encode each word independently
-        for w in pretokenized:
+        for word in pretokenized:
             # Convert the w_bord to bytes first
-            w_b = w.encode("utf-8")
+            w_b = word.encode("utf-8")
             # Convert bytes to a sequence of bytes wrapped in a list
-            w_b = [bytes([c]) for c in w_b]  # 'the' -> [b't', b'h', b'e']
+            w_b = [bytes([c]) for c in w_b]  # b'the' -> [b't', b'h', b'e']
 
             # Start merges
             for merge in self.merges:
@@ -90,7 +90,10 @@ class Tokenizer:
 
 
 if __name__ == "__main__":
-    vocab_path = "gpt2_vocab.json"
-    merges_path = "gpt2_merges.txt"
+    text = "Hello, how are you"
 
-    Tokenizer.from_files(vocab_path, merges_path)
+    tok = Tokenizer.from_files("gpt2_vocab.json", "gpt2_merges.txt")
+    encoded_ids = tok.encode(text)
+    decoded = tok.decode(encoded_ids)
+    print(decoded)
+
