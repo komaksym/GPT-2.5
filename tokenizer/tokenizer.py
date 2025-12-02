@@ -40,32 +40,71 @@ class Tokenizer:
     def encode(self, text):
         """Encodes a string into a sequence of tokens"""
 
-        pretok_pat = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-
-        # Pretokenize
-        #pretokenized = re.findall(pretok_pat, text[0] if isinstance(text, list) else text)
-        pretokenized = re.split(r'\s', text)
+        # GPT-2 pretokenization pattern
+        pretok_pat = r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+        
         encoded_str = []
 
-        # Encode each word independently
-        for word in pretokenized:
-            # Convert the w_bord to bytes first
-            w_b = word.encode("utf-8")
-            # Convert bytes to a sequence of bytes wrapped in a list
-            w_b = [bytes([c]) for c in w_b]  # b'the' -> [b't', b'h', b'e']
+        # Handle special tokens by splitting first
+        if self.special_tokens:
+            # Build pattern to match special tokens, sorted by length descending to handle overlaps
+            sorted_special_tokens = sorted(self.special_tokens, key=len, reverse=True)
+            special_pattern = "|".join(re.escape(tok) for tok in sorted_special_tokens)
+            pattern = f"({special_pattern})"
+            
+            # Split by special tokens
+            parts = re.split(pattern, text)
+            
+            for part in parts:
+                if not part:  # Skip empty strings from split
+                    continue
+                    
+                if part in self.special_tokens:
+                    # Handle special token
+                    w_b = part.encode("utf-8")
+                    encoded_str.append(self.b_to_i[w_b])
+                else:
+                    # Apply GPT-2 pretokenization to non-special parts
+                    pretokenized = re.findall(pretok_pat, part)
+                    for word in pretokenized:
+                        # Convert to bytes
+                        w_b = word.encode("utf-8")
+                        # Convert bytes to a sequence of bytes wrapped in a list
+                        w_b = [bytes([c]) for c in w_b]  # b'the' -> [b't', b'h', b'e']
 
-            # Start merges
-            for merge in self.merges:
-                for idx, (b1, b2) in enumerate(zip(w_b, w_b[1:])):
-                    # If a match was found
-                    if merge == (b1, b2):
-                        # Merge the bytes
-                        w_b = w_b[:idx] + [b1 + b2] + w_b[idx + 2 :]
-                        # Breakout to update the merged string
-                        break
+                        # Start merges
+                        for merge in self.merges:
+                            for idx, (b1, b2) in enumerate(zip(w_b, w_b[1:])):
+                                # If a match was found
+                                if merge == (b1, b2):
+                                    # Merge the bytes
+                                    w_b = w_b[:idx] + [b1 + b2] + w_b[idx + 2 :]
+                                    # Breakout to update the merged string
+                                    break
 
-            # Encode final merges to ints
-            encoded_str.extend([self.b_to_i[b] for b in w_b])
+                        # Encode final merges to ints
+                        encoded_str.extend([self.b_to_i[b] for b in w_b])
+        else:
+            # No special tokens, just apply GPT-2 pretokenization
+            pretokenized = re.findall(pretok_pat, text)
+            for word in pretokenized:
+                # Convert to bytes
+                w_b = word.encode("utf-8")
+                # Convert bytes to a sequence of bytes wrapped in a list
+                w_b = [bytes([c]) for c in w_b]  # b'the' -> [b't', b'h', b'e']
+
+                # Start merges
+                for merge in self.merges:
+                    for idx, (b1, b2) in enumerate(zip(w_b, w_b[1:])):
+                        # If a match was found
+                        if merge == (b1, b2):
+                            # Merge the bytes
+                            w_b = w_b[:idx] + [b1 + b2] + w_b[idx + 2 :]
+                            # Breakout to update the merged string
+                            break
+
+                # Encode final merges to ints
+                encoded_str.extend([self.b_to_i[b] for b in w_b])
         
 
         return encoded_str
@@ -89,9 +128,10 @@ if __name__ == "__main__":
     vocab_path = "gpt2_vocab.json"
     merges_path = "gpt2_merges.txt"
 
-    text = "Héllò hôw <|endoftext|><|endoftext|> are ü? 🙃<|endoftext|>"
+    text = "Hello, how <|endoftext|><|endoftext|> are you?<|endoftext|>"
 
-    tok = Tokenizer.from_files(vocab_path, merges_path, special_tokens=["<|endoftext|>"])
+    tok = Tokenizer.from_files(vocab_path, merges_path, 
+                               special_tokens=["<|endoftext|>", "<|endoftext|><|endoftext|>"])
     encoded_ids = tok.encode(text)
     decoded = tok.decode(encoded_ids)
     print(decoded)
