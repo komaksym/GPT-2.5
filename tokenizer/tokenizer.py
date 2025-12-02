@@ -51,21 +51,24 @@ class Tokenizer:
 
         # Encode each word independently
         for w in pretokenized:
-            # Convert a word to a sequence of bytes wrapped in a list
-            w = [bytes([ord(c)]) for c in w]  # 'the' -> [b't', b'h', b'e']
+            # Convert the word to bytes first
+            w_b = w.encode("utf-8")
+            # Convert bytes to a sequence of bytes wrapped in a list
+            w_b = [bytes([c]) for c in w_b]  # 'the' -> [b't', b'h', b'e']
 
             # Start merges
             for merge in self.merges:
-                for idx, (b1, b2) in enumerate(zip(w, w[1:])):
+                for idx, (b1, b2) in enumerate(zip(w_b, w_b[1:])):
                     # If a match was found
                     if merge == (b1, b2):
                         # Merge the bytes
-                        w = [b1 + b2] + w[idx + 2 :]
+                        w_b = [b1 + b2] + w_b[idx + 2 :]
                         # Breakout to update the merged string
                         break
 
             # Encode final merges to ints
-            encoded_str.extend([self.b_to_i[b] for b in w])
+            encoded_str.extend([self.b_to_i[b] for b in w_b])
+        
 
         return encoded_str
 
