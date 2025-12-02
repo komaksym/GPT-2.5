@@ -62,7 +62,7 @@ class Tokenizer:
                     # If a match was found
                     if merge == (b1, b2):
                         # Merge the bytes
-                        w_b = [b1 + b2] + w_b[idx + 2 :]
+                        w_b = w_b[:idx] + [b1 + b2] + w_b[idx + 2 :]
                         # Breakout to update the merged string
                         break
 
