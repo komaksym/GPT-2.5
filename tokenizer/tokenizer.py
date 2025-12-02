@@ -42,11 +42,9 @@ class Tokenizer:
 
         pretok_pat = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
-        # Strip special tokens
-        if self.special_tokens:
-            text = strip_of_special_tokens(text, self.special_tokens)
         # Pretokenize
-        pretokenized = re.findall(pretok_pat, text[0] if isinstance(text, list) else text)
+        #pretokenized = re.findall(pretok_pat, text[0] if isinstance(text, list) else text)
+        pretokenized = re.split(r'\s', text)
         encoded_str = []
 
         # Encode each word independently
@@ -81,18 +79,19 @@ class Tokenizer:
     def decode(self, ids):
         """Decodes a sequence of tokens to a string"""
 
-        decoded_bytes = [self.vocab[id] for id in ids]  # Map from integers to bytes
-        catted_bytes = b"".join(decoded_bytes)
-
+        decoded_bytes = b"".join([self.vocab[id] for id in ids])  # Map from integers to bytes
         # Decode into UTF-8 codec
-        decoded_str = catted_bytes.decode("utf-8", errors="replace")
+        decoded_str = decoded_bytes.decode("utf-8", errors="replace")
         return decoded_str
 
 
 if __name__ == "__main__":
-    text = "Hello, how are you"
+    vocab_path = "gpt2_vocab.json"
+    merges_path = "gpt2_merges.txt"
 
-    tok = Tokenizer.from_files("gpt2_vocab.json", "gpt2_merges.txt")
+    text = "Héllò hôw <|endoftext|><|endoftext|> are ü? 🙃<|endoftext|>"
+
+    tok = Tokenizer.from_files(vocab_path, merges_path, special_tokens=["<|endoftext|>"])
     encoded_ids = tok.encode(text)
     decoded = tok.decode(encoded_ids)
     print(decoded)
