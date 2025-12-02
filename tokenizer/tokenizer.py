@@ -51,7 +51,7 @@ class Tokenizer:
 
         # Encode each word independently
         for w in pretokenized:
-            # Convert the word to bytes first
+            # Convert the w_bord to bytes first
             w_b = w.encode("utf-8")
             # Convert bytes to a sequence of bytes wrapped in a list
             w_b = [bytes([c]) for c in w_b]  # 'the' -> [b't', b'h', b'e']
@@ -82,14 +82,10 @@ class Tokenizer:
         """Decodes a sequence of tokens to a string"""
 
         decoded_bytes = [self.vocab[id] for id in ids]  # Map from integers to bytes
-        decoded_str = ""
+        catted_bytes = b"".join(decoded_bytes)
 
         # Decode into UTF-8 codec
-        for byte in decoded_bytes:
-            s = byte.decode("utf-8", errors="replace")
-            # Concat the strings
-            decoded_str += s
-
+        decoded_str = catted_bytes.decode("utf-8", errors="replace")
         return decoded_str
 
 
