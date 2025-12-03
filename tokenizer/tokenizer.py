@@ -6,7 +6,7 @@ import json
 class Tokenizer:
     def __init__(self, vocab, merges, special_tokens=None):
         self.vocab = vocab
-        self.b_to_i = {v: k for k, v in self.vocab.items()}
+        self.b_to_i = {v: k for k, v in self.vocab.items()} # Bytes to ints
         self.merges = merges
         self.special_tokens = special_tokens
 
@@ -58,7 +58,7 @@ class Tokenizer:
                 if not part:  # Skip empty strings from split
                     continue
                     
-                if part in self.special_tokens:
+                elif part in self.special_tokens:
                     # Handle special token
                     w_b = part.encode("utf-8")
                     encoded_str.append(self.b_to_i[w_b])
@@ -95,12 +95,15 @@ class Tokenizer:
 
     def _apply_merges(self, w_b):
         """Applies merges"""
+
         for merge in self.merges:
             i = 0
             while i < len(w_b) - 1:
-                if (w_b[i], w_b[i+1]) == merge:
+                if (w_b[i], w_b[i+1]) == merge: # If a merge was found
+                    # Merge the two matching bytes 
+                    # and keep everything like is before and after the matching merge pair
                     w_b = w_b[:i] + [w_b[i] + w_b[i+1]] + w_b[i+2:]
-                else:
+                else: # Else keep searching for merges
                     i += 1
         return w_b
         
