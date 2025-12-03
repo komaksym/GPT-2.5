@@ -1,5 +1,5 @@
 import regex as re
-from tests.common import gpt2_bytes_to_unicode
+from .common import gpt2_bytes_to_unicode
 import json
 
 
