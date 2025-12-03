@@ -1,6 +1,5 @@
 import regex as re
-from common import gpt2_bytes_to_unicode
-from train_tokenizer import strip_of_special_tokens
+from tests.common import gpt2_bytes_to_unicode
 import json
 
 
@@ -41,7 +40,7 @@ class Tokenizer:
         """Encodes a string into a sequence of tokens"""
 
         # GPT-2 pretokenization pattern
-        pretok_pat = r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+        pretok_pat = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
         
         encoded_str = []
 
@@ -72,15 +71,8 @@ class Tokenizer:
                         # Convert bytes to a sequence of bytes wrapped in a list
                         w_b = [bytes([c]) for c in w_b]  # b'the' -> [b't', b'h', b'e']
 
-                        # Start merges
-                        for merge in self.merges:
-                            for idx, (b1, b2) in enumerate(zip(w_b, w_b[1:])):
-                                # If a match was found
-                                if merge == (b1, b2):
-                                    # Merge the bytes
-                                    w_b = w_b[:idx] + [b1 + b2] + w_b[idx + 2 :]
-                                    # Breakout to update the merged string
-                                    break
+                        # Apply merges
+                        w_b = self._apply_merges(w_b)
 
                         # Encode final merges to ints
                         encoded_str.extend([self.b_to_i[b] for b in w_b])
@@ -93,34 +85,39 @@ class Tokenizer:
                 # Convert bytes to a sequence of bytes wrapped in a list
                 w_b = [bytes([c]) for c in w_b]  # b'the' -> [b't', b'h', b'e']
 
-                # Start merges
-                for merge in self.merges:
-                    for idx, (b1, b2) in enumerate(zip(w_b, w_b[1:])):
-                        # If a match was found
-                        if merge == (b1, b2):
-                            # Merge the bytes
-                            w_b = w_b[:idx] + [b1 + b2] + w_b[idx + 2 :]
-                            # Breakout to update the merged string
-                            break
+                # Apply merges
+                w_b = self._apply_merges(w_b)
 
                 # Encode final merges to ints
                 encoded_str.extend([self.b_to_i[b] for b in w_b])
         
-
         return encoded_str
 
+    def _apply_merges(self, w_b):
+        """Applies merges"""
+        for merge in self.merges:
+            i = 0
+            while i < len(w_b) - 1:
+                if (w_b[i], w_b[i+1]) == merge:
+                    w_b = w_b[:i] + [w_b[i] + w_b[i+1]] + w_b[i+2:]
+                else:
+                    i += 1
+        return w_b
+        
     def encode_iterable(self, iterable):
         """Encodes from an iterable"""
 
         for text in iterable:
-            yield(self.encode(text))
+            yield from self.encode(text)
 
     def decode(self, ids):
         """Decodes a sequence of tokens to a string"""
 
-        decoded_bytes = b"".join([self.vocab[id] for id in ids])  # Map from integers to bytes
+        decoded_bytes = [self.vocab[id] for id in ids]  # Map from integers to bytes
+        catted_bytes = b"".join(decoded_bytes)
+
         # Decode into UTF-8 codec
-        decoded_str = decoded_bytes.decode("utf-8", errors="replace")
+        decoded_str = catted_bytes.decode("utf-8", errors="replace")
         return decoded_str
 
 
@@ -128,11 +125,4 @@ if __name__ == "__main__":
     vocab_path = "gpt2_vocab.json"
     merges_path = "gpt2_merges.txt"
 
-    text = "Hello, how <|endoftext|><|endoftext|> are you?<|endoftext|>"
-
-    tok = Tokenizer.from_files(vocab_path, merges_path, 
-                               special_tokens=["<|endoftext|>", "<|endoftext|><|endoftext|>"])
-    encoded_ids = tok.encode(text)
-    decoded = tok.decode(encoded_ids)
-    print(decoded)
-
+    Tokenizer.from_files(vocab_path, merges_path, special_tokens=["<|endoftext|>"])
