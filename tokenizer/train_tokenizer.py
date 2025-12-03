@@ -7,12 +7,11 @@ special_tokens = ["<|endoftext|>", "<start>", "<end>"]
 vocab_size = 268
 num_of_merges = vocab_size - 256
 
-
-PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+pretok_PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
 
 def read_data(input_path):
-    with open(input_path, "r") as f:
+    with open(input_path) as f:
         corpus = f.read()
     return corpus
 
@@ -38,7 +37,7 @@ def strip_of_special_tokens(corpus, special_tokens):
 
 # Pre-tokenization
 def pretokenize(corpus, ptrn):
-    """Pre-tokenizes on regex pattern"""
+    """Pre-tokenizes on regex pattern and counts words"""
 
     counts = {}
     for t in corpus:
@@ -53,7 +52,7 @@ def split_to_bytes(corpus):
     counts = {}
     # Count byte pairs
     for k, v in corpus.items():
-        new_key = tuple([c for c in k])
+        new_key = tuple([c for c in k]) # "iron" -> ('i', 'r', 'o', 'n')
         counts[new_key] = v
 
     # Sort by the highest frequency
@@ -61,7 +60,8 @@ def split_to_bytes(corpus):
     return counts
 
 
-def count_bytepairs(corpus, bp_to_counts=None, bp_to_words=None, mf_pair=None, mf_pair_words=None, merged_words=None, removed_word_freqs=None):
+def count_bytepairs(corpus, bp_to_counts=None, bp_to_words=None, 
+                    merged_words=None, removed_word_freqs=None):
     """Counts bytepair frequencies in the corpus
     If ran the first time (no counts provided) then count all byte pairs in the whole corpus
     If ran consecutively, update counts based on removed words and new merged words"""
@@ -155,7 +155,8 @@ def merge(corpus, merge_pair, merge_pair_words):
         # Add new merged word
         corpus[tuple(new_k)] = corpus[w]
 
-        # Add to merged words to optimize byte pair counts as this only changes and the rest is still the same
+        # Add to merged words to optimize byte pair counts
+        # As this only changes and the rest is still the same
         merged_words.add(tuple(new_k))
 
     # Pop the unmerged words
@@ -167,31 +168,41 @@ def merge(corpus, merge_pair, merge_pair_words):
 
 
 def pair_to_bytes(pair):
-    return tuple(b.encode("utf-8") for b in pair)
+    """Converts a tuple of strings into a tuple of bytes"""
+
+    return tuple(b.encode("utf-8") for b in pair) # ('a', 'c') -> (b'a', b'c')
 
 
 def train_bpe(input_path, vocab_size, special_tokens):
+    """Trains BPE on given corpus based on specified vocab size
+        and returns vocab and merges"""
+
+    # Fill the vocab with initial 256 bytes
     vocab = {i: bytes([i]) for i in range(256)}
+    # Some variables that will take part in the training process
     merges = []
-    mf_pair = None
-    mf_pair_words = None
     merged_words = None
     removed_word_freqs = None
     num_of_merges = vocab_size - 256 - len(special_tokens)
 
-    corpus = read_data(input_path)
+    # Reads the data
+    corpus = read_data(input_path) 
+    # Strips of special tokens to avoid counting them in training process
     corpus = strip_of_special_tokens(corpus, special_tokens)
-    corpus = pretokenize(corpus, PAT)
+    # Pretokenizes based on the regex
+    corpus = pretokenize(corpus, pretok_PAT)
+    # Splits words into tuples of bytes and counts words
     corpus = split_to_bytes(corpus)
 
     # Start merges
     for i in range(num_of_merges):
+        # If ran the first time, count from all corpus
         if i == 0:
-            # Count bytepairs
             counts, counts_to_words = count_bytepairs(corpus)
+        # If consecutive runs, count only from the changed (merged) words
         else:
             counts, counts_to_words = count_bytepairs(
-                corpus, counts, counts_to_words, mf_pair, mf_pair_words, merged_words, removed_word_freqs
+                corpus, counts, counts_to_words, merged_words, removed_word_freqs
             )
         
         # Check if there are any pairs left to merge
@@ -202,7 +213,7 @@ def train_bpe(input_path, vocab_size, special_tokens):
         # Get the most frequent pair
         mf_pair, mf_pair_words = get_mf_pair(counts, counts_to_words)
         # Add merge to merges
-        pair_b = pair_to_bytes(mf_pair)
+        pair_b = pair_to_bytes(mf_pair) # convert to bytes
         merges.append(pair_b)
         # Add the merge to the vocab
         merge_b = "".join(mf_pair).encode("utf-8")
@@ -218,5 +229,6 @@ def train_bpe(input_path, vocab_size, special_tokens):
 
 
 if __name__ == "__main__":
-    vocab, merges = train_bpe("tests/fixtures/corpus.en", 262, special_tokens = ["<|endoftext|>", "<start>", "<end>"])
+    vocab, merges = train_bpe("tests/fixtures/corpus.en", 262, 
+                              special_tokens = ["<|endoftext|>", "<start>", "<end>"])
     print(vocab)
