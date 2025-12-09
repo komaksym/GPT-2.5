@@ -1,22 +1,23 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from einops import einsum, rearrange
+from einops import einsum, rearrange, reduce
 
 
 class Linear(nn.Module):
     def __init__(self, in_features, out_features, device=None, dtype=None):
         super().__init__()
+        # Specify mean for the param initialization
+        mean, std = 0, np.sqrt(2/(in_features+out_features))
         # Init the params from the normal distribution with said mean and std
-        param = torch.normal(
-            mean=0, std=np.sqrt(2 / (in_features + out_features)), size=(out_features, in_features)
-        )
+        param = torch.normal(mean=mean, std=std, size=(out_features, in_features),
+                             dtype=dtype, device=device)
         # Truncate
-        nn.init.trunc_normal_(param, a=-3, b=3)
+        nn.init.trunc_normal_(param, a =-3 * std, b = 3 * std)
         # Init the weight via the nn.Parameter
         self.weight = nn.Parameter(data=param)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return einsum(self.weight, x, "d_out d_in, ... d_in -> ... d_out")
 
 
@@ -26,12 +27,37 @@ class Embedding(nn.Module):
         # Specify mean for the param initialization
         mean, std = 0, 1
         # Init the params from the normal distribution with said mean and std
-        param = torch.normal(mean=mean, std=std, size=(num_embeddings, embedding_dim))
+        param = torch.normal(mean=mean, std=std, size=(num_embeddings, embedding_dim),
+                             dtype=dtype, device=device)
         # Truncate
         nn.init.trunc_normal_(param, a=-3, b=3)
         # Init the embedding via the nn.Parameter
-        self.weight = nn.Parameter(data=param).to(dtype=dtype, device=device)
-
+        self.weight = nn.Parameter(data=param)
+    
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
-        # Lookup
         return self.weight[token_ids]
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, d_model: int, eps: float = 1e-5, device=None, dtype=None):
+        super().__init__()
+        self.d_model = d_model
+        self.eps = eps
+        self.device = device
+        self.dtype = dtype
+
+        # Init the learnable gain parameter
+        param = torch.tensor([1.0] * d_model, device=device, dtype=dtype)
+        self.weight = nn.Parameter(data=param)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Upcast the dtype to float32 to avoid overflowing when squaring the input in rms
+        in_dtype = x.dtype
+        x = x.to(torch.float32)
+        # Calculate RMS
+        rms = np.sqrt(1 / self.d_model * reduce(x**2, "B T C -> B T 1", "sum") + self.eps)
+        breakpoint()
+        # Normalize
+        rmsnorm = x / rms * self.weight
+        # Downcast back to the initial dtype
+        return rmsnorm.to(dtype=in_dtype)
