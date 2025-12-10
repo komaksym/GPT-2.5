@@ -56,8 +56,33 @@ class RMSNorm(nn.Module):
         x = x.to(torch.float32)
         # Calculate RMS
         rms = np.sqrt(1 / self.d_model * reduce(x**2, "B T C -> B T 1", "sum") + self.eps)
-        breakpoint()
         # Normalize
         rmsnorm = x / rms * self.weight
         # Downcast back to the initial dtype
         return rmsnorm.to(dtype=in_dtype)
+
+
+def SiLU(x):
+    """SiLU activation function"""
+
+    return x * torch.sigmoid(x)
+
+
+class SwiGLU(nn.Module):
+    """SiLU activation function + gating mechanism = SwiGLU"""
+
+    def __init__(self, d_model: int, d_ff: int = None, device=None, dtype=None):
+        super().__init__()
+        # Init d_ff dimension
+        self.d_ff = (8 / 3) * d_model if not d_ff else d_ff
+        assert self.d_ff % 64 == 0, "The dimensionality of the feedforward is not a multiple of 64"
+
+        # init params
+        self.w1 = nn.Parameter(data=torch.randn((d_ff, d_model), device=device, dtype=dtype))
+        self.w3 = nn.Parameter(data=torch.randn((d_ff, d_model), device=device, dtype=dtype))
+        self.w2 = nn.Parameter(data=torch.randn((d_model, d_ff), device=device, dtype=dtype))
+
+    def forward(self, x):
+        # Run swiglu
+        result = (SiLU(x @ self.w1.T) * (x @ self.w3.T)) @ self.w2.T
+        return result
