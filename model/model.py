@@ -127,3 +127,8 @@ class RoPE(nn.Module):
         new_shape = list(x.shape[:-2]) + [x.shape[-2], self.d_k]
         x_rot = x_rot.view(*new_shape)
         return x_rot
+
+
+def softmax(x, dim):
+    x = x - torch.max(x, dim=dim).values.unsqueeze(-1)
+    return torch.exp(x) / torch.sum(torch.exp(x), dim=dim).unsqueeze(-1)
