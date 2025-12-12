@@ -130,5 +130,7 @@ class RoPE(nn.Module):
 
 
 def softmax(x, dim):
+    # Subtract the max to avoid overflow
     x = x - torch.max(x, dim=dim).values.unsqueeze(-1)
+    # Calculate softmax
     return torch.exp(x) / torch.sum(torch.exp(x), dim=dim).unsqueeze(-1)
