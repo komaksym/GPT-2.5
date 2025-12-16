@@ -156,3 +156,59 @@ def scaled_dot_prod_attn(Q, K, V, mask=None):
     # Compute probs
     scores = softmax(logits, dim=-1)
     return torch.einsum("b...qk,b...kd->b...qd", scores, V)
+
+
+class MultiheadSelfAttention(nn.Module):
+    def __init__(self, d_model, num_heads, theta=None, max_seq_len=None):
+        super().__init__()
+
+        assert d_model % num_heads == 0, "num heads should be a power of 2"
+
+        self.d_k = self.d_v = d_model // num_heads
+        self.num_heads = num_heads
+
+        self.Wq = nn.Parameter(torch.randn(d_model, d_model))
+        self.Wk = nn.Parameter(torch.randn(d_model, d_model))
+        self.Wv = nn.Parameter(torch.randn(d_model, d_model))
+        self.Wo = nn.Parameter(torch.randn(d_model, d_model))
+
+        if theta is not None and max_seq_len is not None:
+            self.rope = RoPE(theta, self.d_k, max_seq_len)
+
+    def forward(self, x, token_positions=None):
+        Q = x @ self.Wq.T
+        K = x @ self.Wk.T
+        V = x @ self.Wv.T
+
+        # Split Q, K, V into heads
+        Q = rearrange(Q, "b t (h d) -> b h t d", h=self.num_heads)
+        K = rearrange(K, "b t (h d) -> b h t d", h=self.num_heads)
+        V = rearrange(V, "b t (h d) -> b h t d", h=self.num_heads)
+
+        # Causal mask
+        seq_len = x.shape[-2]
+        mask = torch.tril(torch.ones((seq_len, seq_len))).to(dtype=bool)
+
+        for head in range(self.num_heads):
+            # Get QKV of the cur head
+            Q_h = Q[:, head, ...]
+            K_h = K[:, head, ...]
+            V_h = V[:, head, ...]
+
+            # Apply RoPE
+            if token_positions is not None and self.rope:
+                # Rotate Q and K
+                Q_h = self.rope.forward(Q_h, token_positions)
+                K_h = self.rope.forward(K_h, token_positions)
+            
+            QKV_head = scaled_dot_prod_attn(Q_h, K_h, V_h, mask).unsqueeze(1)
+
+            if head == 0:
+                QKV = QKV_head
+            else:
+                QKV = torch.cat([QKV, QKV_head], dim=1)
+
+        # Concat heads
+        QKV = rearrange(QKV, "b h t d -> b t (h d)")
+        return torch.einsum("hd,btd->bth", self.Wo, QKV)
+
