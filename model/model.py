@@ -196,8 +196,11 @@ class MultiheadSelfAttention(nn.Module):
             V_h = V[:, head, ...]
 
             # Apply RoPE
-            if token_positions is not None and self.rope:
+            if self.rope:
                 # Rotate Q and K
+                if token_positions is None:
+                    token_positions = torch.arange(seq_len).unsqueeze(0)
+
                 Q_h = self.rope.forward(Q_h, token_positions)
                 K_h = self.rope.forward(K_h, token_positions)
             
