@@ -215,3 +215,19 @@ class MultiheadSelfAttention(nn.Module):
         QKV = rearrange(QKV, "b h t d -> b t (h d)")
         return torch.einsum("hd,btd->bth", self.Wo, QKV)
 
+
+class TransformerBlock(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, theta=None, max_seq_len=None):
+        super().__init__()
+
+        self.norm_att = RMSNorm(d_model)
+        self.norm_ff = RMSNorm(d_model)
+        self.mhsa = MultiheadSelfAttention(d_model, num_heads, theta, max_seq_len)
+        self.ffn = SwiGLU(d_model, d_ff)
+
+    def forward(self, x):
+        # Attention part of the block
+        attn = x + self.mhsa(self.norm_att(x))
+        # Position-wise feed-forward part of the block
+        ffwd = attn + self.ffn(self.norm_ff(attn))
+        return ffwd
