@@ -203,7 +203,7 @@ class MultiheadSelfAttention(nn.Module):
 
                 Q_h = self.rope.forward(Q_h, token_positions)
                 K_h = self.rope.forward(K_h, token_positions)
-            
+
             QKV_head = scaled_dot_prod_attn(Q_h, K_h, V_h, mask).unsqueeze(1)
 
             if head == 0:
@@ -231,3 +231,30 @@ class TransformerBlock(nn.Module):
         # Position-wise feed-forward part of the block
         ffwd = attn + self.ffn(self.norm_ff(attn))
         return ffwd
+
+
+class TransformerLM(nn.Module):
+    def __init__(
+        self, vocab_size, context_length, num_layers, d_model, num_heads, d_ff, theta=None
+    ):
+        super().__init__()
+
+        self.emb = Embedding(vocab_size, d_model)
+        self.tblocks = [
+            TransformerBlock(d_model, num_heads, d_ff, theta, context_length)
+            for _ in range(num_layers)
+        ]
+        self.norm = RMSNorm(d_model)
+        self.linear = Linear(d_model, vocab_size)
+
+    def forward(self, x):
+        emb = self.emb(x)
+        # Pass embedding through transformer blocks
+        for tblock in self.tblocks:
+            emb = tblock(emb)
+        # Norm the transformer block output
+        normed = self.norm(emb)
+        # Pass through linear
+        logits = self.linear(normed)
+        # Convert to probs
+        return logits
