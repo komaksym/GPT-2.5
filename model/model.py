@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import math
 from einops import einsum, rearrange, reduce
+from collections.abc import Callable, Iterable
+from typing import Optional
 
 
 class Linear(nn.Module):
@@ -278,3 +280,62 @@ def cross_entropy_loss(inputs, targets):
     # Mean negative log likelihood
     loss = -torch.mean(log_probs_correct)
     return loss
+
+
+class AdamW(torch.optim.Optimizer):
+    def __init__(self, params, lr, betas, eps, weight_decay):
+        if lr < 0:
+            raise ValueError(f"Invalid learning rate: {lr}")
+        defaults = {"lr": lr, "betas": betas, "epsilon": eps, "weight_decay": weight_decay}
+        super().__init__(params, defaults)
+    
+    def step(self, closure: Optional[Callable] = None):
+        loss = None
+        if closure is not None:
+             loss = closure()
+
+        breakpoint()
+        for group in self.param_groups:
+            lr = group["lr"]
+            beta1, beta2 = group["betas"]
+            eps = group["epsilon"]
+            weight_decay = group["weight_decay"]
+
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+
+                state = self.state[p]
+                
+                # State initialization
+                if len(state) == 0:
+                    state["t"] = 0
+                    state["m"] = torch.zeros_like(p.data)
+                    state["v"] = torch.zeros_like(p.data)
+                
+                t = state.get("t") + 1
+                state["t"] = t
+                
+                grad = p.grad.data
+                m = state["m"]
+                v = state["v"]
+                
+                # Update moments
+                m = m * beta1 + (1 - beta1) * grad
+                v = v * beta2 + (1 - beta2) * grad**2
+
+                state["m"] = m
+                state["v"] = v
+                
+                # Bias correction
+                alpha_t = lr * math.sqrt(1 - beta2 ** t) / (1 - beta1 ** t)
+                
+                # Update parameters
+                denom = v.sqrt() + eps
+                
+                # Apply updates
+                p.data -= alpha_t * m / denom
+                # Apply weight decay
+                p.data -= lr * weight_decay * p.data
+        
+        return loss
