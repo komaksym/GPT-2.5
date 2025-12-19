@@ -352,3 +352,27 @@ def learning_rate_schedule(t, a_max, a_min, T_w, T_c):
     else:
         a_t = a_min
     return a_t
+
+
+def gradient_clipping(params, max_l2_norm):
+    eps = 1e-6
+
+    # 1. compute total global norm
+    total_sq = 0.0
+    for p in params:
+        if p.grad is not None:
+            total_sq += torch.sum(p.grad ** 2)
+    
+    total_norm = torch.sqrt(total_sq)
+
+    # 2. if we're under threshold, we're done
+    if total_norm < max_l2_norm:
+        return
+    
+    # 3. compute scale factor
+    scale = max_l2_norm / (total_norm + eps)
+
+    # 4. apply scaling to every grad tensor
+    for p in params:
+        if p.grad is not None:
+            p.grad.mul_(scale)
