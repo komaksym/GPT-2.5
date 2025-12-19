@@ -136,11 +136,18 @@ class RoPE(nn.Module):
         return x_rot
 
 
-def softmax(x, dim):
-    # Subtract the max to avoid overflow
-    x = x - torch.max(x, dim=dim).values.unsqueeze(-1)
-    # Calculate softmax
-    return torch.exp(x) / torch.sum(torch.exp(x), dim=dim).unsqueeze(-1)
+def softmax(x, dim, is_log=False):
+    # LogSumExp trick for numerical stability:
+    m = torch.max(x, dim=dim, keepdim=True).values
+    log_sum_exp = m + torch.log(torch.sum(torch.exp(x - m), dim=dim, keepdim=True))
+    
+    # log_softmax = inputs - log_sum_exp
+    log_probs = x - log_sum_exp
+
+    if is_log:
+        return log_probs
+    else:
+        return torch.exp(log_probs)
 
 
 def scaled_dot_prod_attn(Q, K, V, mask=None):
