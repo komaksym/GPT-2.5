@@ -140,7 +140,7 @@ def softmax(x, dim, is_log=False):
     # LogSumExp trick for numerical stability:
     m = torch.max(x, dim=dim, keepdim=True).values
     log_sum_exp = m + torch.log(torch.sum(torch.exp(x - m), dim=dim, keepdim=True))
-    
+
     # log_softmax = inputs - log_sum_exp
     log_probs = x - log_sum_exp
 
@@ -265,3 +265,16 @@ class TransformerLM(nn.Module):
         logits = self.linear(normed)
         # Convert to probs
         return logits
+
+
+def cross_entropy_loss(inputs, targets):
+    # LogSumExp trick for numerical stability:
+    log_probs = softmax(inputs, dim=-1, is_log=True)
+
+    # Pick out the log probs for the correct classes
+    batch_size = inputs.shape[0]
+    log_probs_correct = log_probs[torch.arange(batch_size), targets]
+
+    # Mean negative log likelihood
+    loss = -torch.mean(log_probs_correct)
+    return loss
