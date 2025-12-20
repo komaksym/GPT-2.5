@@ -1,11 +1,13 @@
-import numpy.typing as npt
 import numpy as np
 import torch
-import torch.nn as nn
 import math
+import torch.nn as nn
 from einops import einsum, rearrange, reduce
 from collections.abc import Callable, Iterable
 from typing import Optional
+import numpy.typing as npt
+import typing
+import os
 
 
 class Linear(nn.Module):
@@ -397,3 +399,29 @@ def data_loading(dataset: npt.NDArray, batch_size: int,
         targets[batch] = torch.tensor(dataset[i + 1 : i + 1 + context_length])
     
     return (inputs, targets)
+
+
+def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
+                    iteration: int, out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes]):
+    # Extract state dicts
+    model_state = model.state_dict()
+    optimizer_state = optimizer.state_dict()
+    iteration_state = {"iteration": iteration}
+
+    # Join dicts into a single checkpoint dict
+    checkpoint = {"model_state": model_state} | {"optimizer_state": optimizer_state} \
+                 | {"iteration_state": iteration_state}
+    # Save
+    torch.save(checkpoint, out)
+
+
+def load_checkpoint(src: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
+                    model: torch.nn.Module, optimizer: torch.optim.Optimizer):
+    # Load the checkpoint dict
+    checkpoint = torch.load(src)
+
+    # Extract dicts from the checkpoint and load state dicts
+    model.load_state_dict(checkpoint["model_state"])
+    optimizer.load_state_dict(checkpoint["optimizer_state"])
+    # Return iteration number
+    return checkpoint["iteration_state"]['iteration']
