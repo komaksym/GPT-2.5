@@ -1,5 +1,8 @@
 import regex as re
 from collections import defaultdict
+from tqdm import tqdm
+import json
+from itertools import islice
 
 
 special_tokens = ["<|endoftext|>", "<start>", "<end>"]
@@ -186,7 +189,8 @@ def train_bpe(input_path, vocab_size, special_tokens):
     num_of_merges = vocab_size - 256 - len(special_tokens)
 
     # Reads the data
-    corpus = read_data(input_path) 
+    corpus = read_data(input_path)[:1000]
+    #corpus = read_data(input_path)
     # Strips of special tokens to avoid counting them in training process
     corpus = strip_of_special_tokens(corpus, special_tokens)
     # Pretokenizes based on the regex
@@ -195,7 +199,7 @@ def train_bpe(input_path, vocab_size, special_tokens):
     corpus = split_to_bytes(corpus)
 
     # Start merges
-    for i in range(num_of_merges):
+    for i in tqdm(range(num_of_merges)):
         # If ran the first time, count from all corpus
         if i == 0:
             counts, counts_to_words = count_bytepairs(corpus)
@@ -216,19 +220,41 @@ def train_bpe(input_path, vocab_size, special_tokens):
         pair_b = pair_to_bytes(mf_pair) # convert to bytes
         merges.append(pair_b)
         # Add the merge to the vocab
-        merge_b = "".join(mf_pair).encode("utf-8")
+        merge_b = "".join(mf_pair)
         vocab[256 + i] = merge_b
         # Apply the merge to the corpus
         corpus, merged_words, removed_word_freqs = merge(corpus, "".join(mf_pair), mf_pair_words)
 
     # Add special tokens to the vocab
     for i, token in enumerate(special_tokens):
-        vocab[256 + num_of_merges + i] = token.encode("utf-8")
+        vocab[256 + num_of_merges + i] = token
 
     return vocab, merges
 
 
+def save_vocab_n_merges(vocab, merges):
+    # Save everything except the first 255 bytes
+    vocab = dict(islice(vocab.items(), 256, max(vocab)))
+    # Save vocab as json file
+    with open("tinystories_vocab.json", "w") as outfile:
+        json.dump(vocab, outfile)
+    
+    # Prepare merges in expected format
+    merges_new = []
+    for merge_pair in merges:
+        pair = ""
+        # Decode and add a space between two merged bytes
+        for b in merge_pair:
+            pair += b.decode("utf-8") + " "
+        merges_new.append(pair + "\n")
+
+    # Write merges to a file
+    with open("tinystories_merges.txt", "w") as outfile:
+        outfile.writelines(merges_new)
+
+
 if __name__ == "__main__":
-    vocab, merges = train_bpe("tests/fixtures/corpus.en", 262, 
+    vocab, merges = train_bpe("data/TinyStoriesV2-GPT4-valid.txt", 50257, 
                               special_tokens = ["<|endoftext|>", "<start>", "<end>"])
-    print(vocab)
+
+    save_vocab_n_merges(vocab, merges)
