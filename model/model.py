@@ -259,7 +259,7 @@ class TransformerLM(nn.Module):
         self.norm = RMSNorm(d_model)
         self.linear = Linear(d_model, vocab_size)
 
-    def forward(self, x):
+    def forward(self, x, targets=None):
         emb = self.emb(x)
         # Pass embedding through transformer blocks
         for tblock in self.tblocks:
@@ -268,8 +268,11 @@ class TransformerLM(nn.Module):
         normed = self.norm(emb)
         # Pass through linear
         logits = self.linear(normed)
-        # Convert to probs
-        return logits
+        # Calculate loss
+        loss = None
+        if targets is not None:
+            loss = cross_entropy_loss(logits, targets)
+        return logits, loss
 
 
 def cross_entropy_loss(inputs, targets):
@@ -297,7 +300,6 @@ class AdamW(torch.optim.Optimizer):
         if closure is not None:
              loss = closure()
 
-        breakpoint()
         for group in self.param_groups:
             lr = group["lr"]
             beta1, beta2 = group["betas"]
@@ -384,8 +386,8 @@ def gradient_clipping(params, max_l2_norm):
 def data_loading(dataset: npt.NDArray, batch_size: int,
                  context_length: int, device: str) -> tuple[torch.Tensor, torch.Tensor]:
     # Preallocate x's and y's
-    inputs = torch.zeros(batch_size, context_length, device=device)
-    targets = torch.zeros(batch_size, context_length, device=device)
+    inputs = torch.zeros(batch_size, context_length, device=device, dtype=torch.long)
+    targets = torch.zeros(batch_size, context_length, device=device, dtype=torch.long)
 
     # Number of data points
     n = dataset.shape[0]
@@ -425,3 +427,4 @@ def load_checkpoint(src: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
     optimizer.load_state_dict(checkpoint["optimizer_state"])
     # Return iteration number
     return checkpoint["iteration_state"]['iteration']
+
