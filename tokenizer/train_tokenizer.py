@@ -189,8 +189,7 @@ def train_bpe(input_path, vocab_size, special_tokens):
     num_of_merges = vocab_size - 256 - len(special_tokens)
 
     # Reads the data
-    corpus = read_data(input_path)[:1000]
-    #corpus = read_data(input_path)
+    corpus = read_data(input_path)
     # Strips of special tokens to avoid counting them in training process
     corpus = strip_of_special_tokens(corpus, special_tokens)
     # Pretokenizes based on the regex
