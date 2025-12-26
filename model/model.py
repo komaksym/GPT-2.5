@@ -428,3 +428,12 @@ def load_checkpoint(src: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
     # Return iteration number
     return checkpoint["iteration_state"]['iteration']
 
+
+def sample_data(dataset, batch_size):
+    # Generate the random sample starting points of size batch_size
+    n = dataset[0].shape[0]
+
+    random_batch_idx = torch.randint(0, n - batch_size, (1, ))
+
+    return (dataset[0][random_batch_idx:random_batch_idx+batch_size], 
+            dataset[1][random_batch_idx:random_batch_idx+batch_size])
