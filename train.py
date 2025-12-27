@@ -1,0 +1,93 @@
+from model.model import *
+import argparse
+import numpy as np
+import torch
+import os
+
+temp_path = "checkpoints/mid_training_checkpoint.pt"
+final_path = "checkpoints/final_checkpoint.pt"
+
+
+def training_together(data, batch_size, vocab_size, context_length, num_layers, 
+                      d_model, num_heads, d_ff, theta, train_steps, 
+                      lr, betas, eps, weight_decay, device):
+    model = TransformerLM(vocab_size, context_length, num_layers, d_model, num_heads, d_ff, theta)
+    optimizer = AdamW(model.parameters(), lr, betas, eps, weight_decay)
+    i = 0
+
+    # Check if checkpoint exists
+    if os.path.exists(temp_path):
+        # If it does, load it and keep training from the checkpoint
+        i = load_checkpoint(temp_path, model, optimizer)
+        print("Continuing training from checkpoint!")
+    else:
+        print("Training from scratch!")
+    
+    while i < train_steps:
+        inputs, labels = sample_data(data, batch_size, device)
+        # Zero grads
+        optimizer.zero_grad()
+        # Predictions
+        logits, loss = model(inputs, labels)
+        # Compute gradients
+        loss.backward()
+        # Step optimizer
+        optimizer.step()
+        print(f"step {i+1}, loss: {loss.item()}")
+
+
+        # Save checkpoint every x steps
+        if i > 10 and i % 10 == 0:
+            save_checkpoint(model, optimizer, i, temp_path)
+            print("Saved a mid-training checkpoint!")
+        # If about to finish training, delete the mid training checkpoint
+        # And save the full training checkpoint
+        elif i == train_steps - 1:
+            # Delete the mid training checkpoint
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+                print("Removed mid-training checkpoint!")
+            # Create a final checkpoint
+            save_checkpoint(model, optimizer, i, final_path)
+            print("Saved final checkpoint!")
+
+        i += 1
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--vocab_size", type=int)
+    parser.add_argument("--batch_size", type=int)
+    parser.add_argument("--context_length", type=int)
+    parser.add_argument("--num_layers", type=int)
+    parser.add_argument("--d_model", type=int)
+    parser.add_argument("--num_heads", type=int)
+    parser.add_argument("--d_ff", type=int)
+    parser.add_argument("--theta", type=float)
+    parser.add_argument("--train_steps", type=int)
+    parser.add_argument("--lr", type=float)
+    parser.add_argument("--beta1", type=float)
+    parser.add_argument("--beta2", type=float)
+    parser.add_argument("--eps", type=float)
+    parser.add_argument("--weight_decay", type=float)
+
+    # Parse args from CLI
+    args = parser.parse_args()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Load the data
+    dataset = np.load("ts_valid_set.npy", mmap_mode='r')
+    data = data_loading(dataset=dataset, batch_size=100000, \
+                        context_length=args.context_length, device=device)
+
+    # Start training
+    training_together(data, args.batch_size, args.vocab_size, args.context_length,
+                      args.num_layers, args.d_model, args.num_heads, args.d_ff, 
+                      args.theta, args.train_steps, args.lr, (args.beta1, args.beta2),
+                      args.eps, args.weight_decay, device)
+    
+
+
+if __name__ == "__main__":
+    main()
