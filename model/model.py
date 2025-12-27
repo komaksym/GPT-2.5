@@ -63,7 +63,7 @@ class RMSNorm(nn.Module):
         in_dtype = x.dtype
         x = x.to(torch.float32)
         # Calculate RMS
-        rms = np.sqrt(1 / self.d_model * reduce(x**2, "B T C -> B T 1", "sum") + self.eps)
+        rms = torch.sqrt(1 / self.d_model * reduce(x**2, "B T C -> B T 1", "sum") + self.eps)
         # Normalize
         rmsnorm = x / rms * self.weight
         # Downcast back to the initial dtype
@@ -276,13 +276,16 @@ class TransformerLM(nn.Module):
 
 
 def cross_entropy_loss(inputs, targets):
+    B, T, C = inputs.shape
+
     # LogSumExp trick for numerical stability:
     log_probs = softmax(inputs, dim=-1, is_log=True)
-
+    
     # Pick out the log probs for the correct classes
-    batch_size = inputs.shape[0]
-    log_probs_correct = log_probs[torch.arange(batch_size), targets]
-
+    b = torch.arange(B).unsqueeze(1)
+    t = torch.arange(T).unsqueeze(0)
+    log_probs_correct = log_probs[b, t, targets]
+    
     # Mean negative log likelihood
     loss = -torch.mean(log_probs_correct)
     return loss
@@ -429,11 +432,11 @@ def load_checkpoint(src: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
     return checkpoint["iteration_state"]['iteration']
 
 
-def sample_data(dataset, batch_size):
+def sample_data(dataset, batch_size, device):
     # Generate the random sample starting points of size batch_size
     n = dataset[0].shape[0]
 
     random_batch_idx = torch.randint(0, n - batch_size, (1, ))
 
-    return (dataset[0][random_batch_idx:random_batch_idx+batch_size], 
-            dataset[1][random_batch_idx:random_batch_idx+batch_size])
+    return (dataset[0][random_batch_idx:random_batch_idx+batch_size].to(device=device),
+            dataset[1][random_batch_idx:random_batch_idx+batch_size].to(device=device))
