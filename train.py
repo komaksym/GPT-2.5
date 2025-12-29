@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 import torch
 import os
+import wandb
 
 temp_path = "checkpoints/mid_training_checkpoint.pt"
 final_path = "checkpoints/final_checkpoint.pt"
@@ -11,7 +12,15 @@ final_path = "checkpoints/final_checkpoint.pt"
 def training_together(data, batch_size, vocab_size, context_length, num_layers, 
                       d_model, num_heads, d_ff, theta, train_steps, 
                       lr, betas, eps, weight_decay, device):
+
+
+    # Wandb init
+    run = wandb.init(project="gpt-2.5")
+    config = run.config
+
     model = TransformerLM(vocab_size, context_length, num_layers, d_model, num_heads, d_ff, theta)
+    # Warch model with wandb
+    run.watch(model)
     optimizer = AdamW(model.parameters(), lr, betas, eps, weight_decay)
     i = 0
 
@@ -34,6 +43,8 @@ def training_together(data, batch_size, vocab_size, context_length, num_layers,
         # Step optimizer
         optimizer.step()
         print(f"step {i+1}, loss: {loss.item()}")
+        # Log loss in wandb
+        run.log({"loss": loss.item()})
 
 
         # Save checkpoint every x steps

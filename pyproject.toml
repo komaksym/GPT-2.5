@@ -5,7 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13.0"
 dependencies = [
+    "einops>=0.8.1",
     "jupyter>=1.1.1",
     "lab>=8.5",
+    "pytest>=9.0.2",
     "regex>=2025.11.3",
+    "tiktoken>=0.12.0",
+    "torch>=2.9.1",
+    "wandb>=0.23.1",
 ]
