@@ -9,7 +9,7 @@ temp_path = "checkpoints/mid_training_checkpoint.pt"
 final_path = "checkpoints/final_checkpoint.pt"
 
 
-def training_together(data, batch_size, vocab_size, context_length, num_layers, 
+def training_together(train_set, val_set, batch_size, vocab_size, context_length, num_layers, 
                       d_model, num_heads, d_ff, theta, train_steps, 
                       lr, betas, eps, weight_decay, device):
 
@@ -33,7 +33,7 @@ def training_together(data, batch_size, vocab_size, context_length, num_layers,
         print("Training from scratch!")
     
     while i < train_steps:
-        inputs, labels = sample_data(data, batch_size, device)
+        inputs, labels = sample_data(train_set, batch_size, device)
         # Zero grads
         optimizer.zero_grad()
         # Predictions
@@ -88,12 +88,16 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load the data
-    dataset = np.load("ts_valid_set.npy", mmap_mode='r')
-    data = data_loading(dataset=dataset, batch_size=100000, \
+    train_data = np.load("ts_train_set.npy", mmap_mode='r')
+    train_set = data_loading(dataset=train_data, batch_size=100000, \
+                        context_length=args.context_length, device=device)
+
+    val_data = np.load("ts_valid_set.npy", mmap_mode='r')
+    val_set = data_loading(dataset=val_data, batch_size=10000, \
                         context_length=args.context_length, device=device)
 
     # Start training
-    training_together(data, args.batch_size, args.vocab_size, args.context_length,
+    training_together(train_set, val_set, args.batch_size, args.vocab_size, args.context_length,
                       args.num_layers, args.d_model, args.num_heads, args.d_ff, 
                       args.theta, args.train_steps, args.lr, (args.beta1, args.beta2),
                       args.eps, args.weight_decay, device)
