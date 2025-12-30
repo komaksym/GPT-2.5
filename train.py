@@ -48,10 +48,17 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
         run.log({"loss": loss.item()})
 
 
-        # Save checkpoint every x steps
+        # Save checkpoint and run validation every x steps
         if i > 10 and i % 10 == 0:
             save_checkpoint(model, optimizer, i, temp_path)
             print("Saved a mid-training checkpoint!")
+
+            val_inputs, val_labels = sample_data(val_set, batch_size, device)
+            _, val_loss = model(val_inputs, val_labels)
+            print(f"step {i+1}, val loss: {val_loss.item()}")
+            # Log loss in wandb
+            run.log({"val_loss": val_loss.item()})
+
         # If about to finish training, delete the mid training checkpoint
         # And save the full training checkpoint
         elif i == train_steps - 1:
