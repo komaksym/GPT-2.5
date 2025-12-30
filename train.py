@@ -18,7 +18,8 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
     run = wandb.init(project="gpt-2.5")
     config = run.config
 
-    model = TransformerLM(vocab_size, context_length, num_layers, d_model, num_heads, d_ff, theta)
+    model = TransformerLM(vocab_size, context_length, num_layers,
+                          d_model, num_heads, d_ff, theta, device=device)
     # Warch model with wandb
     run.watch(model)
     optimizer = AdamW(model.parameters(), lr, betas, eps, weight_decay)

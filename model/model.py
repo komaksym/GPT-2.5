@@ -126,8 +126,8 @@ class RoPE(nn.Module):
             )
 
         token_positions = token_positions.long().to(self.cos.device)
-        cos_pos = self.cos[token_positions]  # (..., seq_len, d_half)
-        sin_pos = self.sin[token_positions]
+        cos_pos = self.cos[token_positions].to(self.device)  # (..., seq_len, d_half)
+        sin_pos = self.sin[token_positions].to(self.device)
 
         x_even = x[..., 0::2]  # (..., seq_len, d_half)
         x_odd = x[..., 1::2]  # (..., seq_len, d_half)
@@ -171,7 +171,7 @@ def scaled_dot_prod_attn(Q, K, V, mask=None):
 
 
 class MultiheadSelfAttention(nn.Module):
-    def __init__(self, d_model, num_heads, theta=None, max_seq_len=None):
+    def __init__(self, d_model, num_heads, theta=None, max_seq_len=None, device=None):
         super().__init__()
 
         assert d_model % num_heads == 0, "num heads should be a power of 2"
@@ -179,13 +179,13 @@ class MultiheadSelfAttention(nn.Module):
         self.d_k = self.d_v = d_model // num_heads
         self.num_heads = num_heads
 
-        self.Wq = nn.Parameter(torch.randn(d_model, d_model))
-        self.Wk = nn.Parameter(torch.randn(d_model, d_model))
-        self.Wv = nn.Parameter(torch.randn(d_model, d_model))
-        self.Wo = nn.Parameter(torch.randn(d_model, d_model))
+        self.Wq = nn.Parameter(torch.randn(d_model, d_model, device=device))
+        self.Wk = nn.Parameter(torch.randn(d_model, d_model, device=device))
+        self.Wv = nn.Parameter(torch.randn(d_model, d_model, device=device))
+        self.Wo = nn.Parameter(torch.randn(d_model, d_model, device=device))
 
         if theta is not None and max_seq_len is not None:
-            self.rope = RoPE(theta, self.d_k, max_seq_len)
+            self.rope = RoPE(theta, self.d_k, max_seq_len, device)
 
     def forward(self, x, token_positions=None):
         Q = x @ self.Wq.T
@@ -199,7 +199,7 @@ class MultiheadSelfAttention(nn.Module):
 
         # Causal mask
         seq_len = x.shape[-2]
-        mask = torch.tril(torch.ones((seq_len, seq_len))).to(dtype=bool)
+        mask = torch.tril(torch.ones((seq_len, seq_len), device=x.device)).to(dtype=bool)
 
         for head in range(self.num_heads):
             # Get QKV of the cur head
@@ -229,13 +229,13 @@ class MultiheadSelfAttention(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, theta=None, max_seq_len=None):
+    def __init__(self, d_model, num_heads, d_ff, theta=None, max_seq_len=None, device=None):
         super().__init__()
 
-        self.norm_att = RMSNorm(d_model)
-        self.norm_ff = RMSNorm(d_model)
-        self.mhsa = MultiheadSelfAttention(d_model, num_heads, theta, max_seq_len)
-        self.ffn = SwiGLU(d_model, d_ff)
+        self.norm_att = RMSNorm(d_model, device=device)
+        self.norm_ff = RMSNorm(d_model, device=device)
+        self.mhsa = MultiheadSelfAttention(d_model, num_heads, theta, max_seq_len, device)
+        self.ffn = SwiGLU(d_model, d_ff, device=device)
 
     def forward(self, x):
         # Attention part of the block
@@ -247,17 +247,18 @@ class TransformerBlock(nn.Module):
 
 class TransformerLM(nn.Module):
     def __init__(
-        self, vocab_size, context_length, num_layers, d_model, num_heads, d_ff, theta=None
+        self, vocab_size, context_length, num_layers,
+        d_model, num_heads, d_ff, theta=None, device=None
     ):
         super().__init__()
 
-        self.emb = Embedding(vocab_size, d_model)
+        self.emb = Embedding(vocab_size, d_model, device=device)
         self.tblocks = [
-            TransformerBlock(d_model, num_heads, d_ff, theta, context_length)
+            TransformerBlock(d_model, num_heads, d_ff, theta, context_length, device=device)
             for _ in range(num_layers)
         ]
-        self.norm = RMSNorm(d_model)
-        self.linear = Linear(d_model, vocab_size)
+        self.norm = RMSNorm(d_model, device=device)
+        self.linear = Linear(d_model, vocab_size, device=device)
 
     def forward(self, x, targets=None):
         emb = self.emb(x)
