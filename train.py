@@ -11,7 +11,7 @@ final_path = "checkpoints/final_checkpoint.pt"
 
 def training_together(train_set, val_set, batch_size, vocab_size, context_length, num_layers, 
                       d_model, num_heads, d_ff, theta, train_steps, 
-                      lr, betas, eps, weight_decay, device):
+                      lr, betas, eps, weight_decay, device, checkpoint=None):
 
 
     # Wandb init
@@ -26,9 +26,9 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
     i = 0
 
     # Check if checkpoint exists
-    if os.path.exists(temp_path):
+    if checkpoint is not None:
         # If it does, load it and keep training from the checkpoint
-        i = load_checkpoint(temp_path, model, optimizer)
+        i = load_checkpoint(checkpoint, model, optimizer)
         print("Continuing training from checkpoint!")
     else:
         print("Training from scratch!")
