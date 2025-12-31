@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import tiktoken
 import math
 import torch.nn as nn
 from einops import einsum, rearrange, reduce
@@ -441,3 +442,25 @@ def sample_data(dataset, batch_size, device):
 
     return (dataset[0][random_batch_idx:random_batch_idx+batch_size].to(device=device),
             dataset[1][random_batch_idx:random_batch_idx+batch_size].to(device=device))
+
+
+def generate(inputs, max_tokens, context_length, model, device):
+    enc = tiktoken.get_encoding("o200k_base")
+    inputs = torch.tensor(enc.encode(inputs), device=device).unsqueeze(0)
+
+    for _ in range(max_tokens):
+        # Generate next token
+        logits, _ = model(inputs)
+        next_token = torch.argmax(logits[:, -1, :], dim=-1)
+        # Concatenate the token to the inputs tensor
+        inputs = torch.cat((inputs, next_token.unsqueeze(0)), dim=1)
+        # If generated endoftext = end subsequent generation
+        if next_token == "<|endoftext|>":
+            break
+        # If the input is larger than the context length, 
+        # Use only the last context length amount of tokens
+        if inputs.shape[-1] > context_length:
+            inputs = inputs[-context_length:]
+
+    # Print output
+    print("\nGenerated sequence:\n", enc.decode(inputs[0].tolist()))
