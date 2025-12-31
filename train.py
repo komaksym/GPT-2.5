@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import os
 import wandb
+import tiktoken
 
 temp_path = "checkpoints/mid_training_checkpoint.pt"
 final_path = "checkpoints/final_checkpoint.pt"
@@ -49,7 +50,7 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
 
 
         # Save checkpoint and run validation every x steps
-        if i > 10 and i % 10 == 0:
+        if i % 10 == 0:
             save_checkpoint(model, optimizer, i, temp_path)
             print("Saved a mid-training checkpoint!")
 
@@ -58,6 +59,10 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
             print(f"step {i+1}, val loss: {val_loss.item()}")
             # Log loss in wandb
             run.log({"val_loss": val_loss.item()})
+
+            # Print some outputs
+            generate("Once upon a time,", 20, context_length, model, device)
+
 
         # If about to finish training, delete the mid training checkpoint
         # And save the full training checkpoint
