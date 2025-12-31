@@ -455,7 +455,7 @@ def generate(inputs, max_tokens, context_length, model, device):
         # Concatenate the token to the inputs tensor
         inputs = torch.cat((inputs, next_token.unsqueeze(0)), dim=1)
         # If generated endoftext = end subsequent generation
-        if next_token == "<|endoftext|>":
+        if enc.decode(next_token.tolist()) == "<|endoftext|>":
             break
         # If the input is larger than the context length, 
         # Use only the last context length amount of tokens
@@ -464,3 +464,4 @@ def generate(inputs, max_tokens, context_length, model, device):
 
     # Print output
     print("\nGenerated sequence:\n", enc.decode(inputs[0].tolist()))
+    del inputs
