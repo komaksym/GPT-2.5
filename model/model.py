@@ -408,16 +408,24 @@ def data_loading(dataset: npt.NDArray, batch_size: int,
     return (inputs, targets)
 
 
+def to_cpu(obj):
+    if isinstance(obj, torch.Tensor):
+        return obj.cpu()
+    elif isinstance(obj, dict):
+        return {k: to_cpu(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [to_cpu(v) for v in obj]
+    else:
+        return obj
+
+
 def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
                     iteration: int, out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes]):
-    # Extract state dicts
-    model_state = model.state_dict()
-    optimizer_state = optimizer.state_dict()
-    iteration_state = {"iteration": iteration}
 
     # Join dicts into a single checkpoint dict
-    checkpoint = {"model_state": model_state} | {"optimizer_state": optimizer_state} \
-                 | {"iteration_state": iteration_state}
+    checkpoint = {"model_state": to_cpu(model.state_dict())} | \
+                 {"optimizer_state": to_cpu(optimizer.state_dict())} | \
+                 {"iteration_state": iteration}
     # Save
     torch.save(checkpoint, out)
 
