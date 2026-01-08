@@ -50,19 +50,22 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
 
 
         # Save checkpoint and run validation every x steps
-        if i % 100 == 0:
+        if i % 10 == 0:
             save_checkpoint(model, optimizer, i, temp_path)
             print("Saved a mid-training checkpoint!")
 
-            # Run validation
-            val_inputs, val_labels = sample_data(val_set, batch_size, device)
-            _, val_loss = model(val_inputs, val_labels)
-            print(f"step {i+1}, val loss: {val_loss.item()}")
-            # Log loss in wandb
-            run.log({"val_loss": val_loss.item()})
+            model.eval()
+            with torch.no_grad():
+                # Run validation
+                val_inputs, val_labels = sample_data(val_set, batch_size, device)
+                _, val_loss = model(val_inputs, val_labels)
+                print(f"step {i+1}, val loss: {val_loss.item()}")
+                # Log loss in wandb
+                run.log({"val_loss": val_loss.item()})
 
-            # Print some outputs
-            generate("Once upon a time,", 20, context_length, model, device)
+                # Print some outputs
+                generate("Once upon a time,", 20, context_length, model, device)
+            model.train()
 
 
         # If about to finish training, delete the mid training checkpoint
