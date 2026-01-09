@@ -455,14 +455,18 @@ def sample_data(dataset, batch_size, device):
             dataset[1][random_batch_idx:random_batch_idx+batch_size].to(device=device))
 
 
-def generate(inputs, max_tokens, context_length, model, device):
+def generate(inputs, max_tokens, context_length, model, temp, top_p, device):
     enc = tiktoken.get_encoding("o200k_base")
     inputs = torch.tensor(enc.encode(inputs), device=device).unsqueeze(0)
 
     for _ in range(max_tokens):
         # Generate next token
         logits, _ = model(inputs)
-        next_token = torch.argmax(logits[:, -1, :], dim=-1)
+        # Apply softmax with temperature
+        probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
+        # Use top p sampling for next token
+        next_token = top_p_sampling(probs, p=top_p, device=device)
+        #next_token = torch.argmax(logits[:, -1, :], dim=-1)
         # Concatenate the token to the inputs tensor
         inputs = torch.cat((inputs, next_token.unsqueeze(0)), dim=1)
         # If generated endoftext = end subsequent generation
@@ -476,3 +480,23 @@ def generate(inputs, max_tokens, context_length, model, device):
     # Print output
     print("\nGenerated sequence:\n", enc.decode(inputs[0].tolist()))
     del inputs
+
+
+def top_p_sampling(probs, p, device):
+    # Flatten the first dimension
+    probs = torch.flatten(probs)
+    # Sort probabilities
+    sorted_probs, indices = torch.sort(probs, descending=True)
+    nucleus = []
+    i = 0
+    cum_prob = 0
+
+    # Sample the probabilities 
+    while cum_prob <= p:
+        nucleus.append(indices[i])
+        cum_prob += sorted_probs[i]
+        i += 1
+    
+    # Randomly sample a logit
+    rand_logit = torch.randint(high=len(nucleus), size=(1,))
+    return torch.tensor([nucleus[rand_logit]], device=device)

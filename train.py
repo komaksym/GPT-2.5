@@ -64,7 +64,8 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
                 run.log({"val_loss": val_loss.item()})
 
                 # Print some outputs
-                generate("Once upon a time,", 20, context_length, model, device)
+                generate("Once upon a time,", 20, context_length, model, 
+                         temp=0.8, top_p=0.9, device=device)
             model.train()
 
 
