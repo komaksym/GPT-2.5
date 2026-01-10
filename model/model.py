@@ -466,7 +466,6 @@ def generate(inputs, max_tokens, context_length, model, temp, top_p, device):
         probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
         # Use top p sampling for next token
         next_token = top_p_sampling(probs, p=top_p, device=device)
-        #next_token = torch.argmax(logits[:, -1, :], dim=-1)
         # Concatenate the token to the inputs tensor
         inputs = torch.cat((inputs, next_token.unsqueeze(0)), dim=1)
         # If generated endoftext = end subsequent generation
@@ -479,7 +478,6 @@ def generate(inputs, max_tokens, context_length, model, temp, top_p, device):
 
     # Print output
     print("\nGenerated sequence:\n", enc.decode(inputs[0].tolist()))
-    del inputs
 
 
 def top_p_sampling(probs, p, device):
@@ -493,10 +491,8 @@ def top_p_sampling(probs, p, device):
     cumsum = torch.cumsum(sorted_probs, dim=0)
     # Get the first index of an element where cumsum > p
     idx = torch.argmax((cumsum > p).int()).item()
-
     # Get the nucleus
     nucleus = sorted_probs[:idx]
-
     # Randomly sample a token now
     token = torch.multinomial(nucleus, 1)
     # Return the token by looking up in indices
