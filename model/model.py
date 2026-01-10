@@ -487,16 +487,17 @@ def top_p_sampling(probs, p, device):
     probs = torch.flatten(probs)
     # Sort probabilities
     sorted_probs, indices = torch.sort(probs, descending=True)
-    nucleus = []
-    i = 0
-    cum_prob = 0
 
     # Sample the probabilities 
-    while cum_prob <= p:
-        nucleus.append(indices[i])
-        cum_prob += sorted_probs[i]
-        i += 1
-    
-    # Randomly sample a logit
-    rand_logit = torch.randint(high=len(nucleus), size=(1,))
-    return torch.tensor([nucleus[rand_logit]], device=device)
+    # Calculate the cumsum
+    cumsum = torch.cumsum(sorted_probs, dim=0)
+    # Get the first index of an element where cumsum > p
+    idx = torch.argmax((cumsum > p).int()).item()
+
+    # Get the nucleus
+    nucleus = sorted_probs[:idx]
+
+    # Randomly sample a token now
+    token = torch.multinomial(nucleus, 1)
+    # Return the token by looking up in indices
+    return torch.tensor([indices[token]], device=device)
