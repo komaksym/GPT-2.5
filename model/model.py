@@ -459,25 +459,26 @@ def generate(inputs, max_tokens, context_length, model, temp, top_p, device):
     enc = tiktoken.get_encoding("o200k_base")
     inputs = torch.tensor(enc.encode(inputs), device=device).unsqueeze(0)
 
-    for _ in range(max_tokens):
-        # Generate next token
-        logits, _ = model(inputs)
-        # Apply softmax with temperature
-        probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
-        # Use top p sampling for next token
-        next_token = top_p_sampling(probs, p=top_p, device=device)
-        # Concatenate the token to the inputs tensor
-        inputs = torch.cat((inputs, next_token.unsqueeze(0)), dim=1)
-        # If generated endoftext = end subsequent generation
-        if enc.decode(next_token.tolist()) == "<|endoftext|>":
-            break
-        # If the input is larger than the context length, 
-        # Use only the last context length amount of tokens
-        if inputs.shape[-1] > context_length:
-            inputs = inputs[-context_length:]
+    for i in range(5):
+        for _ in range(max_tokens):
+            # Generate next token
+            logits, _ = model(inputs)
+            # Apply softmax with temperature
+            probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
+            # Use top p sampling for next token
+            next_token = top_p_sampling(probs, p=top_p, device=device)
+            # Concatenate the token to the inputs tensor
+            inputs = torch.cat((inputs, next_token.unsqueeze(0)), dim=1)
+            # If generated endoftext = end subsequent generation
+            if enc.decode(next_token.tolist()) == "<|endoftext|>":
+                break
+            # If the input is larger than the context length, 
+            # Use only the last context length amount of tokens
+            if inputs.shape[-1] > context_length:
+                inputs = inputs[-context_length:]
 
-    # Print output
-    print("\nGenerated sequence:\n", enc.decode(inputs[0].tolist()))
+        # Print output
+        print(f"\nGenerated sequence №{i+1}:\n", enc.decode(inputs[0].tolist()))
 
 
 def top_p_sampling(probs, p, device):
@@ -486,7 +487,6 @@ def top_p_sampling(probs, p, device):
     # Sort probabilities
     sorted_probs, indices = torch.sort(probs, descending=True)
 
-    # Sample the probabilities 
     # Calculate the cumsum
     cumsum = torch.cumsum(sorted_probs, dim=0)
     # Get the first index of an element where cumsum > p
