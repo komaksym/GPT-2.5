@@ -50,7 +50,7 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
 
 
         # Save checkpoint and run validation every x steps
-        if i > 100 and i % 100 == 0:
+        if i >= 100 and i % 100 == 0:
             save_checkpoint(model, optimizer, i, temp_path)
             print("Saved a mid-training checkpoint!")
 
