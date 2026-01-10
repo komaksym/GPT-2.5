@@ -492,7 +492,7 @@ def top_p_sampling(probs, p, device):
     # Get the first index of an element where cumsum > p
     idx = torch.argmax((cumsum > p).int()).item()
     # Get the nucleus
-    nucleus = sorted_probs[:idx]
+    nucleus = sorted_probs[:idx+1]
     # Randomly sample a token now
     token = torch.multinomial(nucleus, 1)
     # Return the token by looking up in indices
