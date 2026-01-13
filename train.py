@@ -15,6 +15,10 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
                       lr, betas, eps, weight_decay, device, checkpoint=None):
 
 
+    # Dataset loaders
+    train_set_loader = DataLoader(train_set, batch_size, device)
+    val_set_loader = DataLoader(val_set, batch_size, device)
+
     # Wandb init
     run = wandb.init(project="gpt-2.5")
     config = run.config
@@ -35,7 +39,7 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
         print("Training from scratch!")
     
     while i < train_steps:
-        inputs, labels = sample_data(train_set, batch_size, device)
+        inputs, labels = train_set_loader.next_batch()
         # Zero grads
         optimizer.zero_grad()
         # Predictions
@@ -57,7 +61,7 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
             model.eval()
             with torch.no_grad():
                 # Run validation
-                val_inputs, val_labels = sample_data(val_set, batch_size, device)
+                val_inputs, val_labels = val_set_loader.next_batch()
                 _, val_loss = model(val_inputs, val_labels)
                 print(f"step {i+1}, val loss: {val_loss.item()}")
                 # Log loss in wandb

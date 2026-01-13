@@ -497,3 +497,43 @@ def top_p_sampling(probs, p, device):
     token = torch.multinomial(nucleus, 1)
     # Return the token by looking up in indices
     return torch.tensor([indices[token]], device=device)
+
+
+class DataLoader:
+    def __init__(self, dataset, batch_size, device):
+        self.dataset = dataset
+        self.idx = 0
+        self.n = dataset[0].shape[0]
+        self.batch_size = batch_size
+        self.device = device
+
+
+    def next_batch(self):
+        # Generate the random sample starting points of size batch_size
+        if self.idx + self.batch_size > self.n:
+            # The remainder to slice from the beginning
+            remain = (self.idx + self.batch_size) - self.n
+            # What's left of the first chunk
+            x = self.dataset[0][self.idx:self.idx+self.batch_size].to(device=self.device)
+            y = self.dataset[1][self.idx:self.idx+self.batch_size].to(device=self.device)
+
+            # Slice the rest
+            x_rest = self.dataset[0][:remain].to(device=self.device)
+            y_rest = self.dataset[1][:remain].to(device=self.device)
+
+            # Concatenate the two
+            x = torch.cat((x, x_rest), dim=0)
+            y = torch.cat((y, y_rest), dim=0)
+
+            # Reset index
+            self.idx = remain
+        
+        # Slice inputs and targets
+        x = self.dataset[0][self.idx:self.idx+self.batch_size].to(device=self.device)
+        y = self.dataset[1][self.idx:self.idx+self.batch_size].to(device=self.device)
+
+        # Move the index
+        self.idx += self.batch_size
+
+        return (x, y)
+
