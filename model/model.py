@@ -478,7 +478,7 @@ def generate(prompt, max_tokens, context_length, model, temp, top_p, device):
                 inputs = inputs[-context_length:]
 
         # Print output
-        print(f"\nGenerated sequence №{i+1}:\n", enc.decode(inputs[0].tolist()))
+        print(f"\nGenerated sequence №{i+1}:\n", enc.decode(inputs[0].tolist()) + "\n")
 
 
 def top_p_sampling(probs, p, device):

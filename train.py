@@ -10,7 +10,7 @@ temp_path = "checkpoints/mid_training_checkpoint.pt"
 final_path = "checkpoints/final_checkpoint.pt"
 
 
-def training_together(train_set, val_set, batch_size, vocab_size, context_length, num_layers, 
+def training_together(train_set, val_set, batch_size, grad_accum_steps, context_length, num_layers, 
                       d_model, num_heads, d_ff, theta, train_steps, 
                       lr, betas, eps, weight_decay, device, checkpoint=None):
 
@@ -23,7 +23,7 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
     run = wandb.init(project="gpt-2.5")
     config = run.config
 
-    model = TransformerLM(vocab_size, context_length, num_layers,
+    model = TransformerLM(50257, context_length, num_layers,
                           d_model, num_heads, d_ff, theta, device=device)
     # Warch model with wandb
     run.watch(model)
@@ -40,14 +40,16 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
     
     while i < train_steps:
         inputs, labels = train_set_loader.next_batch()
-        # Zero grads
-        optimizer.zero_grad()
         # Predictions
         _, loss = model(inputs, labels)
         # Compute gradients
         loss.backward()
-        # Step optimizer
-        optimizer.step()
+        # Update params once accumulated gradients
+        if (i+1) % grad_accum_steps == 0:
+            # Step optimizer
+            optimizer.step()
+            # Zero grads
+            optimizer.zero_grad()
         print(f"step {i+1}, loss: {loss.item()}")
         # Log loss in wandb
         run.log({"loss": loss.item()})
@@ -90,8 +92,8 @@ def training_together(train_set, val_set, batch_size, vocab_size, context_length
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--vocab_size", type=int)
     parser.add_argument("--batch_size", type=int)
+    parser.add_argument("--grad_accum_steps", type=int)
     parser.add_argument("--context_length", type=int)
     parser.add_argument("--num_layers", type=int)
     parser.add_argument("--d_model", type=int)
@@ -111,16 +113,16 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load the data
-    train_data = np.load("ts_train_set.npy", mmap_mode='r')
+    train_data = np.load("ts_train_set_gpt2tok.npy", mmap_mode='r')
     train_set = data_loading(dataset=train_data, batch_size=100000, \
                         context_length=args.context_length, device=device)
 
-    val_data = np.load("ts_valid_set.npy", mmap_mode='r')
+    val_data = np.load("ts_valid_set_gpt2tok.npy", mmap_mode='r')
     val_set = data_loading(dataset=val_data, batch_size=10000, \
                         context_length=args.context_length, device=device)
 
     # Start training
-    training_together(train_set, val_set, args.batch_size, args.vocab_size, args.context_length,
+    training_together(train_set, val_set, args.batch_size, args.grad_accum_steps, args.context_length,
                       args.num_layers, args.d_model, args.num_heads, args.d_ff, 
                       args.theta, args.train_steps, args.lr, (args.beta1, args.beta2),
                       args.eps, args.weight_decay, device)
