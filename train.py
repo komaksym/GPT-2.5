@@ -39,27 +39,28 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         print("Training from scratch!")
     
     while i < train_steps:
-        inputs, labels = train_set_loader.next_batch()
-        # Predictions
-        _, loss = model(inputs, labels)
-        # Normalize the loss
-        loss = loss / grad_accum_steps
-        # Compute gradients
-        loss.backward()
         # Update params once accumulated gradients
-        if (i+1) % grad_accum_steps == 0:
-            # Step optimizer
-            optimizer.step()
-            # Zero grads
-            optimizer.zero_grad()
-        raw_loss = loss.item() * grad_accum_steps
-        print(f"step {i+1}, loss: {raw_loss}")
+        loss_accum = 0.0
+        for _ in range(grad_accum_steps):
+            inputs, labels = train_set_loader.next_batch()
+            # Predictions
+            _, loss = model(inputs, labels)
+            # Normalize the loss
+            loss = loss / grad_accum_steps
+            loss_accum += loss.item()
+            # Compute gradients
+            loss.backward()
+        # Step optimizer
+        optimizer.step()
+        # Zero grads
+        optimizer.zero_grad()
+        print(f"step {i+1}, loss: {loss_accum}")
         # Log loss in wandb
-        run.log({"loss": raw_loss})
+        run.log({"loss": loss_accum})
 
 
         # Save checkpoint and run validation every x steps
-        if i >= 100 and i % 100 == 0:
+        if i >= 500 and i % 500 == 0:
             save_checkpoint(model, optimizer, i, temp_path)
             print("Saved a mid-training checkpoint!")
 
