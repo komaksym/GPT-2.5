@@ -42,6 +42,8 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         inputs, labels = train_set_loader.next_batch()
         # Predictions
         _, loss = model(inputs, labels)
+        # Normalize the loss
+        loss = loss / grad_accum_steps
         # Compute gradients
         loss.backward()
         # Update params once accumulated gradients
@@ -50,9 +52,10 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
             optimizer.step()
             # Zero grads
             optimizer.zero_grad()
-        print(f"step {i+1}, loss: {loss.item()}")
+        raw_loss = loss.item() * grad_accum_steps
+        print(f"step {i+1}, loss: {raw_loss}")
         # Log loss in wandb
-        run.log({"loss": loss.item()})
+        run.log({"loss": raw_loss})
 
 
         # Save checkpoint and run validation every x steps
