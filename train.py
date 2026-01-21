@@ -5,14 +5,30 @@ import torch
 import os
 import wandb
 import tiktoken
+import torch.distributed as dist
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from torch.distributed.fsdp import MixedPrecision
+import functools
+
 
 temp_path = "checkpoints/mid_training_checkpoint.pt"
 final_path = "checkpoints/final_checkpoint.pt"
 
 
+def setup():
+    # initialize the process group
+    dist.init_process_group("nccl")
+
+
+def cleanup():
+    dist.destroy_process_group()
+
+
 def training_together(train_set, val_set, batch_size, grad_accum_steps, context_length, num_layers, 
-                      d_model, num_heads, d_ff, theta, train_steps, 
-                      lr, betas, eps, weight_decay, device, checkpoint=None):
+                      d_model, num_heads, d_ff, theta, train_steps, lr, betas, eps, weight_decay,
+                      device, rank, autowrap_policy, mp_policy, checkpoint=None):
 
 
     # Dataset loaders
@@ -24,7 +40,13 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
     config = run.config
 
     model = TransformerLM(50257, context_length, num_layers,
-                          d_model, num_heads, d_ff, theta, device=device)
+                          d_model, num_heads, d_ff, theta, device=device).to(rank)
+    
+    model = FSDP(model, 
+                 auto_wrap_policy=autowrap_policy,
+                 mixed_precision=mp_policy,
+                 device_id=torch.cuda.current_device())
+                 
     # Warch model with wandb
     run.watch(model)
     optimizer = AdamW(model.parameters(), lr, betas, eps, weight_decay)
@@ -116,20 +138,50 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # FSDP
+    # For GPT-2, we target the specific block class (e.g., GPT2Block)
+    my_auto_wrap_policy = functools.partial(
+        transformer_auto_wrap_policy, 
+        transformer_layer_cls={TransformerBlock},
+    )
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+
+    bf16_ready = (
+        torch.version.cuda
+        and torch.cuda.is_bf16_supported()
+        and LooseVersion(torch.version.cuda) >= "11.0"
+        and dist.is_nccl_available()
+        and nccl.version() >= (2, 10)
+    )
+
+    bfSixteen = MixedPrecision(
+    param_dtype=torch.bfloat16,
+    # Gradient communication precision.
+    reduce_dtype=torch.bfloat16,
+    # Buffer precision.
+    buffer_dtype=torch.bfloat16,
+)
+
+    if bf16_ready:
+        mp_policy = bfSixteen
+    else:
+        mp_policy = None
+
     # Load the data
     train_data = np.load("ts_train_set_gpt2tok.npy", mmap_mode='r')
-    train_set = data_loading(dataset=train_data, batch_size=100000, \
+    train_set = data_loading(dataset=train_data, batch_size=1000000, \
                         context_length=args.context_length, device=device)
 
     val_data = np.load("ts_valid_set_gpt2tok.npy", mmap_mode='r')
-    val_set = data_loading(dataset=val_data, batch_size=10000, \
+    val_set = data_loading(dataset=val_data, batch_size=100000, \
                         context_length=args.context_length, device=device)
 
     # Start training
     training_together(train_set, val_set, args.batch_size, args.grad_accum_steps, args.context_length,
                       args.num_layers, args.d_model, args.num_heads, args.d_ff, 
                       args.theta, args.train_steps, args.lr, (args.beta1, args.beta2),
-                      args.eps, args.weight_decay, device)
+                      args.eps, args.weight_decay, device, local_rank, my_auto_wrap_policy, mp_policy)
     
 
 
