@@ -17,7 +17,15 @@ temp_path = "checkpoints/mid_training_checkpoint.pt"
 final_path = "checkpoints/final_checkpoint.pt"
 
 
+def is_distributed():
+    return "RANK" in os.environ and "WORLD_SIZE" in os.environ
+
+
 def setup():
+    if not is_distributed():
+        print("Running in Single-GPU/CPU mode")
+        return
+
     # initialize the process group
     dist.init_process_group("nccl")
 
@@ -40,12 +48,14 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
     config = run.config
 
     model = TransformerLM(50257, context_length, num_layers,
-                          d_model, num_heads, d_ff, theta, device=device).to(rank)
+                          d_model, num_heads, d_ff, theta, device=device)
     
-    model = FSDP(model, 
-                 auto_wrap_policy=autowrap_policy,
-                 mixed_precision=mp_policy,
-                 device_id=torch.cuda.current_device())
+    # If in distributed mode
+    if rank and autowrap_policy and mp_policy:
+        model = FSDP(model.to(rank), 
+                    auto_wrap_policy=autowrap_policy,
+                    mixed_precision=mp_policy,
+                    device_id=torch.cuda.current_device())
                  
     # Warch model with wandb
     run.watch(model)
@@ -66,7 +76,8 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         for _ in range(grad_accum_steps):
             inputs, labels = train_set_loader.next_batch()
             # Predictions
-            _, loss = model(inputs, labels)
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                _, loss = model(inputs, labels)
             # Normalize the loss
             loss = loss / grad_accum_steps
             loss_accum += loss.item()
@@ -139,34 +150,36 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # FSDP
-    # For GPT-2, we target the specific block class (e.g., GPT2Block)
-    my_auto_wrap_policy = functools.partial(
-        transformer_auto_wrap_policy, 
-        transformer_layer_cls={TransformerBlock},
+    setup()
+
+    local_rank, my_auto_wrap_policy, mp_policy = None, None, None
+    if is_distributed():
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+
+        my_auto_wrap_policy = functools.partial(
+            transformer_auto_wrap_policy, 
+            transformer_layer_cls={TransformerBlock},
+        )
+
+        bf16_ready = (
+            torch.version.cuda
+            and torch.cuda.is_bf16_supported()
+            and dist.is_nccl_available()
+        )
+
+        bfSixteen = MixedPrecision(
+        param_dtype=torch.bfloat16,
+        # Gradient communication precision.
+        reduce_dtype=torch.bfloat16,
+        # Buffer precision.
+        buffer_dtype=torch.bfloat16,
     )
-    local_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local_rank)
 
-    bf16_ready = (
-        torch.version.cuda
-        and torch.cuda.is_bf16_supported()
-        and LooseVersion(torch.version.cuda) >= "11.0"
-        and dist.is_nccl_available()
-        and nccl.version() >= (2, 10)
-    )
-
-    bfSixteen = MixedPrecision(
-    param_dtype=torch.bfloat16,
-    # Gradient communication precision.
-    reduce_dtype=torch.bfloat16,
-    # Buffer precision.
-    buffer_dtype=torch.bfloat16,
-)
-
-    if bf16_ready:
-        mp_policy = bfSixteen
-    else:
-        mp_policy = None
+        if bf16_ready:
+            mp_policy = bfSixteen
+        else:
+            mp_policy = None
 
     # Load the data
     train_data = np.load("ts_train_set_gpt2tok.npy", mmap_mode='r')
@@ -183,6 +196,7 @@ def main():
                       args.theta, args.train_steps, args.lr, (args.beta1, args.beta2),
                       args.eps, args.weight_decay, device, local_rank, my_auto_wrap_policy, mp_policy)
     
+    cleanup()
 
 
 if __name__ == "__main__":
