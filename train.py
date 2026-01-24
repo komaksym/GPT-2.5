@@ -11,6 +11,7 @@ from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.distributed.fsdp import MixedPrecision
 import functools
+import datetime
 
 
 temp_path = "checkpoints/mid_training_checkpoint.pt"
@@ -27,7 +28,7 @@ def setup():
         return
 
     # initialize the process group
-    dist.init_process_group("nccl")
+    dist.init_process_group("nccl", timeout=datetime.timedelta(seconds=60))
 
 
 def cleanup():
@@ -43,32 +44,36 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
     train_set_loader = DataLoader(train_set, batch_size, device)
     val_set_loader = DataLoader(val_set, batch_size, device)
 
-    # Wandb init
-    run = wandb.init(project="gpt-2.5")
-    config = run.config
 
     model = TransformerLM(50257, context_length, num_layers,
                           d_model, num_heads, d_ff, theta, device=device)
     
+    # Wandb init
+    if rank == 0:
+        run = wandb.init(project="gpt-2.5")
+        config = run.config
+        run.watch(model)
+
     # If in distributed mode
     if rank and autowrap_policy and mp_policy:
         model = FSDP(model.to(rank), 
                     auto_wrap_policy=autowrap_policy,
                     mixed_precision=mp_policy,
-                    device_id=torch.cuda.current_device())
+                    device_id=torch.cuda.current_device(),
+                    sync_module_states=True)
                  
     # Warch model with wandb
-    run.watch(model)
     optimizer = AdamW(model.parameters(), lr, betas, eps, weight_decay)
     i = 0
 
     # Check if checkpoint exists
-    if checkpoint is not None:
-        # If it does, load it and keep training from the checkpoint
-        i = load_checkpoint(checkpoint, model, optimizer)
-        print("Continuing training from checkpoint!")
-    else:
-        print("Training from scratch!")
+    if rank == 0:
+        if checkpoint is not None:
+            # If it does, load it and keep training from the checkpoint
+            i = load_checkpoint(checkpoint, model, optimizer)
+            print("Continuing training from checkpoint!")
+        else:
+            print("Training from scratch!")
     
     while i < train_steps:
         # Update params once accumulated gradients
@@ -80,50 +85,59 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
                 _, loss = model(inputs, labels)
             # Normalize the loss
             loss = loss / grad_accum_steps
-            loss_accum += loss.item()
+            loss_accum += loss.detach().item()
             # Compute gradients
             loss.backward()
         # Step optimizer
         optimizer.step()
         # Zero grads
         optimizer.zero_grad()
-        print(f"step {i+1}, loss: {loss_accum}")
-        # Log loss in wandb
-        run.log({"loss": loss_accum})
+        # Coordinated logging
+        #if rank == 0:
+            #print(f"step {i+1}, loss: {loss_accum}")
+            ## Log loss in wandb
+            #run.log({"loss": loss_accum})
 
 
         # Save checkpoint and run validation every x steps
-        if i >= 500 and i % 500 == 0:
-            save_checkpoint(model, optimizer, i, temp_path)
+        if i >= 50 and i % 50 == 0:
+            #save_checkpoint(model, optimizer, i, temp_path)
             print("Saved a mid-training checkpoint!")
+
+            dist.barrier()
 
             model.eval()
             with torch.no_grad():
                 # Run validation
                 val_inputs, val_labels = val_set_loader.next_batch()
-                _, val_loss = model(val_inputs, val_labels)
-                print(f"step {i+1}, val loss: {val_loss.item()}")
-                # Log loss in wandb
-                run.log({"val_loss": val_loss.item()})
+                with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                    _, val_loss = model(val_inputs, val_labels)
+                if rank == 0:
+                    print(f"step {i+1}, val loss: {val_loss.item()}")
+                    # Log loss in wandb
+                    run.log({"val_loss": val_loss.item()})
 
                 # Print some outputs
                 generate("Once upon a time,", 20, context_length, model, 
-                         temp=0.8, top_p=0.9, device=device)
+                        temp=0.8, top_p=0.9, device=device)
             model.train()
+            dist.barrier()
 
 
         # If about to finish training, delete the mid training checkpoint
         # And save the full training checkpoint
         elif i == train_steps - 1:
-            # Delete the mid training checkpoint
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-                print("Removed mid-training checkpoint!")
-            # Create a final checkpoint
-            save_checkpoint(model, optimizer, i, final_path)
-            print("Saved final checkpoint!")
+            if rank == 0:
+                # Delete the mid training checkpoint
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    print("Removed mid-training checkpoint!")
+                # Create a final checkpoint
+                save_checkpoint(model, optimizer, i, final_path)
+                print("Saved final checkpoint!")
 
         # Next training step
+        print(f"Rank {rank} finished step {i+1}")
         i += 1
 
 
