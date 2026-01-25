@@ -55,7 +55,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         run.watch(model)
 
     # If in distributed mode
-    if rank and autowrap_policy and mp_policy:
+    if rank is not None and autowrap_policy and mp_policy:
         model = FSDP(model.to(rank), 
                     auto_wrap_policy=autowrap_policy,
                     mixed_precision=mp_policy,
@@ -80,6 +80,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         loss_accum = 0.0
         for _ in range(grad_accum_steps):
             inputs, labels = train_set_loader.next_batch()
+
             # Predictions
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                 _, loss = model(inputs, labels)
@@ -93,18 +94,16 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         # Zero grads
         optimizer.zero_grad()
         # Coordinated logging
-        #if rank == 0:
-            #print(f"step {i+1}, loss: {loss_accum}")
-            ## Log loss in wandb
-            #run.log({"loss": loss_accum})
+        if rank == 0:
+            print(f"step {i+1}, loss: {loss_accum}")
+            # Log loss in wandb
+            run.log({"loss": loss_accum})
 
 
         # Save checkpoint and run validation every x steps
-        if i >= 50 and i % 50 == 0:
+        if i >= 100 and i % 100 == 0:
             #save_checkpoint(model, optimizer, i, temp_path)
-            print("Saved a mid-training checkpoint!")
-
-            dist.barrier()
+            #print("Saved a mid-training checkpoint!")
 
             model.eval()
             with torch.no_grad():
@@ -118,10 +117,12 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
                     run.log({"val_loss": val_loss.item()})
 
                 # Print some outputs
-                generate("Once upon a time,", 20, context_length, model, 
+                generated_sqs = generate("Once upon a time,", 20, context_length, model, 
                         temp=0.8, top_p=0.9, device=device)
+                if rank == 0:
+                    for seq in generated_sqs:
+                        print(seq)
             model.train()
-            dist.barrier()
 
 
         # If about to finish training, delete the mid training checkpoint
@@ -137,7 +138,6 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
                 print("Saved final checkpoint!")
 
         # Next training step
-        print(f"Rank {rank} finished step {i+1}")
         i += 1
 
 

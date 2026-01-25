@@ -457,12 +457,14 @@ def sample_data(dataset, batch_size, device):
 
 def generate(prompt, max_tokens, context_length, model, temp, top_p, device):
     enc = tiktoken.get_encoding("o200k_base")
+    sentences = []
 
     for i in range(5):
         inputs = torch.tensor(enc.encode(prompt), device=device).unsqueeze(0)
         for _ in range(max_tokens):
             # Generate next token
-            logits, _ = model(inputs)
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                logits, _ = model(inputs)
             # Apply softmax with temperature
             probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
             # Use top p sampling for next token
@@ -478,7 +480,8 @@ def generate(prompt, max_tokens, context_length, model, temp, top_p, device):
                 inputs = inputs[-context_length:]
 
         # Print output
-        print(f"\nGenerated sequence №{i+1}:\n", enc.decode(inputs[0].tolist()) + "\n")
+        sentences.append(f"\nGenerated sequence №{i+1}:\n" + enc.decode(inputs[0].tolist()) + "\n")
+    return sentences
 
 
 def top_p_sampling(probs, p, device):
