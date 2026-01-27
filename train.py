@@ -9,9 +9,8 @@ import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-from torch.distributed.fsdp import MixedPrecision
+from torch.distributed.fsdp import MixedPrecision, FullStateDictConfig
 import functools
-import datetime
 
 
 temp_path = "checkpoints/mid_training_checkpoint.pt"
@@ -20,8 +19,6 @@ final_path = "checkpoints/final_checkpoint.pt"
 torch.manual_seed(42)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(42)
-
-torch.set_float32_matmul_precision("medium")
 
 
 def is_distributed():
@@ -34,11 +31,37 @@ def setup():
         return
 
     # initialize the process group
-    dist.init_process_group("nccl", timeout=datetime.timedelta(seconds=60))
+    dist.init_process_group("nccl")
 
 
 def cleanup():
     dist.destroy_process_group()
+
+
+def run_evaluation(dataset_loader, model, context_length, device, run, rank, iteration):
+    model.eval()
+
+    with torch.no_grad():
+        # Run validation
+        val_inputs, val_labels = dataset_loader.next_batch()
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            _, val_loss = model(val_inputs, val_labels)
+
+        if rank == 0:
+            print(f"step {iteration+1}, val loss: {val_loss.item()}")
+            # Log loss in wandb
+            run.log({"val_loss": val_loss.item()})
+
+        # Run generation
+        generated_sqs = generate("Once upon a time,", 20, context_length, model, 
+                temp=0.8, top_p=0.9, device=device)
+
+        # Print generated sentences
+        if rank == 0:
+            for seq in generated_sqs:
+                print(seq)
+
+    model.train()
 
 
 def training_together(train_set, val_set, batch_size, grad_accum_steps, context_length, num_layers, 
@@ -121,25 +144,9 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
             #save_checkpoint(model, optimizer, i, temp_path)
             #print("Saved a mid-training checkpoint!")
 
-            model.eval()
-            with torch.no_grad():
-                # Run validation
-                val_inputs, val_labels = val_set_loader.next_batch()
-                with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                    _, val_loss = model(val_inputs, val_labels)
-                if rank == 0:
-                    print(f"step {i+1}, val loss: {val_loss.item()}")
-                    # Log loss in wandb
-                    run.log({"val_loss": val_loss.item()})
-
-                # Print some outputs
-                generated_sqs = generate("Once upon a time,", 20, context_length, model, 
-                        temp=0.8, top_p=0.9, device=device)
-                if rank == 0:
-                    for seq in generated_sqs:
-                        print(seq)
-            model.train()
-
+            # Run evaluation
+            run_evaluation(val_set_loader, model, context_length,
+                           device, run, rank, i)
 
         # If about to finish training, delete the mid training checkpoint
         # And save the full training checkpoint
