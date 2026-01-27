@@ -426,8 +426,8 @@ def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
                     iteration: int, out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes]):
 
     # Join dicts into a single checkpoint dict
-    checkpoint = {"model_state": to_cpu(model.state_dict())} | \
-                 {"optimizer_state": to_cpu(optimizer.state_dict())} | \
+    checkpoint = {"model_state": model} | \
+                 {"optimizer_state": optimizer} | \
                  {"iteration_state": iteration}
     # Save
     torch.save(checkpoint, out)
