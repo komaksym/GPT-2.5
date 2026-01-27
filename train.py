@@ -66,7 +66,7 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
 
 
 def training_together(train_set, val_set, batch_size, grad_accum_steps, context_length, num_layers, 
-                      d_model, num_heads, d_ff, theta, train_steps, lr, betas, eps, weight_decay,
+                      d_model, num_heads, d_ff, theta, train_steps, a_max, betas, eps, weight_decay,
                       device, rank, autowrap_policy, mp_policy, checkpoint=None):
 
 
@@ -94,7 +94,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
                     sync_module_states=True)
                  
     # Warch model with wandb
-    optimizer = AdamW(model.parameters(), lr, betas, eps, weight_decay)
+    optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
     i = 0
 
     # Events for timing
@@ -117,7 +117,6 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         loss_accum = 0.0
         for _ in range(grad_accum_steps):
             inputs, labels = train_set_loader.next_batch()
-
             # Predictions
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                 _, loss = model(inputs, labels)
@@ -126,6 +125,10 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
             loss_accum += loss.detach().item()
             # Compute gradients
             loss.backward()
+        # Learning rate scheduler
+        lr = learning_rate_schedule(i, a_max, 0.1 * a_max, 0.05 * train_steps, train_steps)
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = lr
         # Step optimizer
         optimizer.step()
         # Zero grads
