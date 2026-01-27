@@ -17,6 +17,12 @@ import datetime
 temp_path = "checkpoints/mid_training_checkpoint.pt"
 final_path = "checkpoints/final_checkpoint.pt"
 
+torch.manual_seed(42)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(42)
+
+torch.set_float32_matmul_precision("medium")
+
 
 def is_distributed():
     return "RANK" in os.environ and "WORLD_SIZE" in os.environ
@@ -66,6 +72,10 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
     optimizer = AdamW(model.parameters(), lr, betas, eps, weight_decay)
     i = 0
 
+    # Events for timing
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+
     # Check if checkpoint exists
     if rank == 0:
         if checkpoint is not None:
@@ -76,6 +86,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
             print("Training from scratch!")
     
     while i < train_steps:
+        start_event.record()
         # Update params once accumulated gradients
         loss_accum = 0.0
         for _ in range(grad_accum_steps):
@@ -93,9 +104,14 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         optimizer.step()
         # Zero grads
         optimizer.zero_grad()
+        end_event.record()
+        # Wait for the GPU to reach end_event
+        torch.cuda.synchronize()
+        step_time_ms = start_event.elapsed_time(end_event)
+        tokens_per_sec = (batch_size * context_length) / (step_time_ms / 1000)
         # Coordinated logging
         if rank == 0:
-            print(f"step {i+1}, loss: {loss_accum}")
+            print(f"step {i+1}, loss: {loss_accum:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
             # Log loss in wandb
             run.log({"loss": loss_accum})
 
