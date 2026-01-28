@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 import tiktoken
 import math
 import torch.nn as nn
@@ -201,35 +202,22 @@ class MultiheadSelfAttention(nn.Module):
         K = rearrange(K, "b t (h d) -> b h t d", h=self.num_heads)
         V = rearrange(V, "b t (h d) -> b h t d", h=self.num_heads)
 
-        # Causal mask
         seq_len = x.shape[-2]
-        mask = torch.tril(torch.ones((seq_len, seq_len), device=x.device)).to(dtype=bool)
 
-        for head in range(self.num_heads):
-            # Get QKV of the cur head
-            Q_h = Q[:, head, ...]
-            K_h = K[:, head, ...]
-            V_h = V[:, head, ...]
+        # Apply RoPE
+        if self.rope:
+            # Rotate Q and K
+            if token_positions is None:
+                token_positions = torch.arange(seq_len).unsqueeze(0)
 
-            # Apply RoPE
-            if self.rope:
-                # Rotate Q and K
-                if token_positions is None:
-                    token_positions = torch.arange(seq_len).unsqueeze(0)
+            Q = self.rope(Q, token_positions)
+            K = self.rope(K, token_positions)
 
-                Q_h = self.rope.forward(Q_h, token_positions)
-                K_h = self.rope.forward(K_h, token_positions)
-
-            QKV_head = scaled_dot_prod_attn(Q_h, K_h, V_h, mask).unsqueeze(1)
-
-            if head == 0:
-                QKV = QKV_head
-            else:
-                QKV = torch.cat([QKV, QKV_head], dim=1)
+        out = F.scaled_dot_product_attention(Q, K, V, is_causal=True)
 
         # Concat heads
-        QKV = rearrange(QKV, "b h t d -> b t (h d)")
-        return torch.einsum("hd,btd->bth", self.Wo, QKV)
+        out = rearrange(out, "b h t d -> b t (h d)")
+        return torch.einsum("hd,btd->bth", self.Wo, out)
 
 
 class TransformerBlock(nn.Module):
