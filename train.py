@@ -146,7 +146,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         if rank == 0:
             print(f"step {i+1}, loss: {loss_accum:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
             # Log loss in wandb
-            run.log({"loss": loss_accum})
+            run.log({"loss": loss_accum, "norm": norm, "dt": step_time_ms, "tok/s": tokens_per_sec})
 
         # Save checkpoint and run validation every x steps
         if i >= 100 and i % 100 == 0:
