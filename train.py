@@ -19,6 +19,9 @@ warnings.filterwarnings("ignore")
 temp_path = "checkpoints/mid_training_checkpoint.pt"
 final_path = "checkpoints/final_checkpoint.pt"
 
+TRAINING_SET_DATA_CREATION_BATCH_SIZE = 1000000
+VAL_SET_DATA_CREATION_BATCH_SIZE = 100000
+
 torch.manual_seed(42)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(42)
@@ -67,7 +70,7 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
     model.train()
 
 
-def fsdp_save_checkpoint(model, optimizer, rank, step_loss):
+def fsdp_save_checkpoint(model, optimizer, rank, step_loss, iteration):
     # FSDP way of saving a checkpoint
     save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
     with FSDP.state_dict_type(
@@ -77,7 +80,7 @@ def fsdp_save_checkpoint(model, optimizer, rank, step_loss):
         #cpu_state = model.state_dict()
     if rank == 0:
         print("Saving a checkpoint...")
-        save_checkpoint(model_state_dict, optim_state_dict, i, temp_path)
+        save_checkpoint(model_state_dict, optim_state_dict, iteration, temp_path)
         print("Saved a mid-training checkpoint!")
     # Update checkpoint loss
     last_checkpoint_loss = step_loss
@@ -103,6 +106,23 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
     if rank == 0:
         run = wandb.init(project="gpt-2.5")
         config = run.config
+        config.batch_size = batch_size
+        config.grad_accum_steps = grad_accum_steps
+        config.context_length = context_length
+        config.num_layers = num_layers
+        config.d_model = d_model
+        config.num_heads = num_heads
+        config.d_ff = d_ff
+        config.theta = theta
+        config.train_steps = train_steps
+        config.lr_max = a_max
+        config.betas = betas
+        config.eps = eps
+        config.weight_decay = weight_decay
+        config.training_set_data_creation_batch_size = TRAINING_SET_DATA_CREATION_BATCH_SIZE
+        config.val_set_data_creation_batch_size = VAL_SET_DATA_CREATION_BATCH_SIZE
+        config.training_sampled_with_replacement = False if 'train_set_loader' and \
+                                                        'val_set_loader' in locals() else True
         run.watch(model)
 
     # If in distributed mode
@@ -171,7 +191,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         if i >= 100 and i % 100 == 0:
             # Save a new checkpoint only if cur_loss < last_loss
             if loss_accum < last_checkpoint_loss:
-                fsdp_save_checkpoint(model, optimizer, rank, loss_accum)
+                fsdp_save_checkpoint(model, optimizer, rank, loss_accum, i)
 
             # Run evaluation
             run_evaluation(val_set_loader, model, context_length,
@@ -186,7 +206,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
                     os.remove(temp_path)
                     print("Removed mid-training checkpoint!")
                 # Create a final checkpoint
-                fsdp_save_checkpoint(model, optimizer, rank, loss_accum)
+                fsdp_save_checkpoint(model, optimizer, rank, loss_accum, i)
                 print("Saved final checkpoint!")
 
         # Next training step
@@ -249,11 +269,11 @@ def main():
 
     # Load the data
     train_data = np.load("ts_train_set_gpt2tok.npy", mmap_mode='r')
-    train_set = data_loading(dataset=train_data, batch_size=1000000, \
+    train_set = data_loading(dataset=train_data, batch_size=TRAINING_SET_DATA_CREATION_BATCH_SIZE, \
                         context_length=args.context_length, device=device)
 
     val_data = np.load("ts_valid_set_gpt2tok.npy", mmap_mode='r')
-    val_set = data_loading(dataset=val_data, batch_size=100000, \
+    val_set = data_loading(dataset=val_data, batch_size=VAL_SET_DATA_CREATION_BATCH_SIZE, \
                         context_length=args.context_length, device=device)
 
     # Start training
