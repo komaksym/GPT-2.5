@@ -96,6 +96,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
                  
     # Warch model with wandb
     optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
+    last_checkpoint_loss = float('inf')
     i = 0
 
     # Events for timing
@@ -147,20 +148,23 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
             # Log loss in wandb
             run.log({"loss": loss_accum})
 
-
         # Save checkpoint and run validation every x steps
         if i >= 100 and i % 100 == 0:
-            # FSDP way of saving a checkpoint
-            save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-            with FSDP.state_dict_type(
-                model, StateDictType.FULL_STATE_DICT, save_policy
-            ):
-                model_state_dict, optim_state_dict = get_state_dict(model, optimizer)
-                #cpu_state = model.state_dict()
-            if rank == 0:
-                print("Saving a checkpoint...")
-                save_checkpoint(model_state_dict, optim_state_dict, i, temp_path)
-                print("Saved a mid-training checkpoint!")
+            # Save a new checkpoint only if cur_loss < last_loss
+            if loss_accum < last_checkpoint_loss:
+                # FSDP way of saving a checkpoint
+                save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+                with FSDP.state_dict_type(
+                    model, StateDictType.FULL_STATE_DICT, save_policy
+                ):
+                    model_state_dict, optim_state_dict = get_state_dict(model, optimizer)
+                    #cpu_state = model.state_dict()
+                if rank == 0:
+                    print("Saving a checkpoint...")
+                    save_checkpoint(model_state_dict, optim_state_dict, i, temp_path)
+                    print("Saved a mid-training checkpoint!")
+                # Update checkpoint loss
+                last_checkpoint_loss = loss_accum
 
             # Run evaluation
             run_evaluation(val_set_loader, model, context_length,
