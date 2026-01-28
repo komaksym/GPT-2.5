@@ -13,6 +13,7 @@ from torch.distributed.fsdp import MixedPrecision, FullStateDictConfig, StateDic
 from torch.distributed.checkpoint.state_dict import get_state_dict
 import functools
 import warnings
+import tqdm
 
 warnings.filterwarnings("ignore")
 
@@ -150,6 +151,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
             print("Continuing training from checkpoint!")
         else:
             print("Training from scratch!")
+        pbar = tqdm.tqdm(range(train_steps), colour="blue")
     
     # Start training
     while i < train_steps:
@@ -186,6 +188,8 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
             print(f"step {i+1}, loss: {loss_accum:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
             # Log loss in wandb
             run.log({"loss": loss_accum, "norm": norm, "dt": step_time_ms, "tok/s": tokens_per_sec})
+            # Increment pbar
+            pbar.update(1)
 
         # Save checkpoint and run validation every x steps
         if i >= 100 and i % 100 == 0:
@@ -211,6 +215,8 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
 
         # Next training step
         i += 1
+    # Close progress bar, since the training is finished
+    pbar.close()
 
 
 def main():
