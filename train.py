@@ -12,6 +12,9 @@ from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.distributed.fsdp import MixedPrecision, FullStateDictConfig, StateDictType
 from torch.distributed.checkpoint.state_dict import get_state_dict
 import functools
+import warnings
+
+warnings.filterwarnings("ignore")
 
 
 temp_path = "checkpoints/mid_training_checkpoint.pt"
