@@ -126,6 +126,8 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
             loss_accum += loss.detach().item()
             # Compute gradients
             loss.backward()
+        # Grad clipping
+        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         # Learning rate scheduler
         lr = learning_rate_schedule(i, a_max, 0.1 * a_max, 0.05 * train_steps, train_steps)
         for param_group in optimizer.param_groups:
@@ -141,7 +143,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         tokens_per_sec = (batch_size * context_length) / (step_time_ms / 1000)
         # Coordinated logging
         if rank == 0:
-            print(f"step {i+1}, loss: {loss_accum:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
+            print(f"step {i+1}, loss: {loss_accum:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
             # Log loss in wandb
             run.log({"loss": loss_accum})
 
