@@ -16,7 +16,6 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-
 temp_path = "checkpoints/mid_training_checkpoint.pt"
 final_path = "checkpoints/final_checkpoint.pt"
 
@@ -66,6 +65,23 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
                 print(seq)
 
     model.train()
+
+
+def fsdp_save_checkpoint(model, optimizer, rank, step_loss):
+    # FSDP way of saving a checkpoint
+    save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    with FSDP.state_dict_type(
+        model, StateDictType.FULL_STATE_DICT, save_policy
+    ):
+        model_state_dict, optim_state_dict = get_state_dict(model, optimizer)
+        #cpu_state = model.state_dict()
+    if rank == 0:
+        print("Saving a checkpoint...")
+        save_checkpoint(model_state_dict, optim_state_dict, i, temp_path)
+        print("Saved a mid-training checkpoint!")
+    # Update checkpoint loss
+    last_checkpoint_loss = step_loss
+    return last_checkpoint_loss
 
 
 def training_together(train_set, val_set, batch_size, grad_accum_steps, context_length, num_layers, 
@@ -155,19 +171,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         if i >= 100 and i % 100 == 0:
             # Save a new checkpoint only if cur_loss < last_loss
             if loss_accum < last_checkpoint_loss:
-                # FSDP way of saving a checkpoint
-                save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-                with FSDP.state_dict_type(
-                    model, StateDictType.FULL_STATE_DICT, save_policy
-                ):
-                    model_state_dict, optim_state_dict = get_state_dict(model, optimizer)
-                    #cpu_state = model.state_dict()
-                if rank == 0:
-                    print("Saving a checkpoint...")
-                    save_checkpoint(model_state_dict, optim_state_dict, i, temp_path)
-                    print("Saved a mid-training checkpoint!")
-                # Update checkpoint loss
-                last_checkpoint_loss = loss_accum
+                fsdp_save_checkpoint(model, optimizer, rank, loss_accum)
 
             # Run evaluation
             run_evaluation(val_set_loader, model, context_length,
@@ -176,13 +180,13 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         # If about to finish training, delete the mid training checkpoint
         # And save the full training checkpoint
         elif i == train_steps - 1:
-            if rank == 0:
+            if loss_accum < last_checkpoint_loss:
                 # Delete the mid training checkpoint
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
                     print("Removed mid-training checkpoint!")
                 # Create a final checkpoint
-                save_checkpoint(model, optimizer, i, final_path)
+                fsdp_save_checkpoint(model, optimizer, rank, loss_accum)
                 print("Saved final checkpoint!")
 
         # Next training step
