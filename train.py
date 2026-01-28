@@ -77,6 +77,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
 
     model = TransformerLM(50257, context_length, num_layers,
                           d_model, num_heads, d_ff, theta, device=device)
+    model.compile()
     
     # Wandb init
     run = None # For global scope
