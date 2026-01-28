@@ -192,7 +192,7 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
             pbar.update(1)
 
         # Save checkpoint and run validation every x steps
-        if i >= 100 and i % 100 == 0:
+        if i >= 500 and i % 500 == 0:
             # Save a new checkpoint only if cur_loss < last_loss
             if loss_accum < last_checkpoint_loss:
                 fsdp_save_checkpoint(model, optimizer, rank, loss_accum, i)
@@ -288,6 +288,7 @@ def main():
                       args.theta, args.train_steps, args.lr, (args.beta1, args.beta2),
                       args.eps, args.weight_decay, device, local_rank, my_auto_wrap_policy, mp_policy)
     
+    dist.barrier()
     cleanup()
 
 
