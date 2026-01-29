@@ -186,7 +186,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
         if rank == 0:
             print(f"step {i+1}, loss: {loss_accum:.3f}, perp: {perplexity:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
             # Log loss in wandb
-            run.log({"loss": loss_accum, "perplexity": perplexity, "norm": norm, "dt": step_time_ms, "tok/s": tokens_per_sec})
+            run.log({"loss": loss_accum, "perplexity": perplexity, "norm": norm, "lr": lr})
             # Increment pbar
             pbar.update(1)
 
