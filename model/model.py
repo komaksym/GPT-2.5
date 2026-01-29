@@ -506,7 +506,7 @@ class DataLoader:
         buf = self.dataset[self.cur_shard_pos : self.cur_shard_pos + B * T + 1]
 
         # Convert to torch and move to GPU only now
-        buf_torch = torch.fron_numpy(buf.astype(np.int64))
+        buf_torch = torch.from_numpy(buf.astype(np.int64))
 
         x = buf_torch[:-1].view(B, T) # Inputs
         y = buf_torch[1:].view(B, T)

@@ -181,7 +181,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
         torch.cuda.synchronize()
         step_time_ms = start_event.elapsed_time(end_event)
         tokens_per_sec = (batch_size * context_length) / (step_time_ms / 1000)
-        perplexity = torch.exp(loss_accum)
+        perplexity = np.exp(loss_accum)
         # Coordinated logging
         if rank == 0:
             print(f"step {i+1}, loss: {loss_accum:.3f}, perp: {perplexity:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
