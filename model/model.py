@@ -503,7 +503,7 @@ class DataLoader:
         B, T = self.B, self.T
         
         # Calculate the slice
-        buf = self.data[self.cur_shard_pos : self.cur_shard_pos + B * T + 1]
+        buf = self.dataset[self.cur_shard_pos : self.cur_shard_pos + B * T + 1]
 
         # Convert to torch and move to GPU only now
         buf_torch = torch.fron_numpy(buf.astype(np.int64))
