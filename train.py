@@ -183,11 +183,12 @@ def training_together(train_set, val_set, batch_size, grad_accum_steps, context_
         torch.cuda.synchronize()
         step_time_ms = start_event.elapsed_time(end_event)
         tokens_per_sec = (batch_size * context_length) / (step_time_ms / 1000)
+        perplexity = torch.exp(loss_accum)
         # Coordinated logging
         if rank == 0:
-            print(f"step {i+1}, loss: {loss_accum:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
+            print(f"step {i+1}, loss: {loss_accum:.3f}, perp: {perplexity:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
             # Log loss in wandb
-            run.log({"loss": loss_accum, "norm": norm, "dt": step_time_ms, "tok/s": tokens_per_sec})
+            run.log({"loss": loss_accum, "perplexity": perplexity, "norm": norm, "dt": step_time_ms, "tok/s": tokens_per_sec})
             # Increment pbar
             pbar.update(1)
 
