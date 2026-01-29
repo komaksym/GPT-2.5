@@ -88,14 +88,12 @@ def fsdp_save_checkpoint(model, optimizer, rank, step_loss, iteration):
     return last_checkpoint_loss
 
 
-def training_together(train_set, val_set, batch_size, grad_accum_steps, context_length, num_layers, 
+def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_steps, context_length, num_layers, 
                       d_model, num_heads, d_ff, theta, train_steps, a_max, betas, eps, weight_decay,
                       device, rank, autowrap_policy, mp_policy, checkpoint=None):
 
 
-    # Dataset loaders
-    train_set_loader = DataLoader(train_set, batch_size, device)
-    val_set_loader = DataLoader(val_set, batch_size, device)
+  
 
 
     model = TransformerLM(50257, context_length, num_layers,
@@ -275,16 +273,11 @@ def main():
             mp_policy = None
 
     # Load the data
-    train_data = np.load("ts_train_set_gpt2tok.npy", mmap_mode='r')
-    train_set = data_loading(dataset=train_data, batch_size=TRAINING_SET_DATA_CREATION_BATCH_SIZE, \
-                        context_length=args.context_length, device=device)
-
-    val_data = np.load("ts_valid_set_gpt2tok.npy", mmap_mode='r')
-    val_set = data_loading(dataset=val_data, batch_size=VAL_SET_DATA_CREATION_BATCH_SIZE, \
-                        context_length=args.context_length, device=device)
+    train_set_loader = DataLoader("ts_train_set_gpt2tok.npy", args.batch_size, args.context_length)
+    val_set_loader = DataLoader("ts_valid_set_gpt2tok.npy", args.batch_size, args.context_length)
 
     # Start training
-    training_together(train_set, val_set, args.batch_size, args.grad_accum_steps, args.context_length,
+    training_together(train_set_loader, val_set_loader, args.batch_size, args.grad_accum_steps, args.context_length,
                       args.num_layers, args.d_model, args.num_heads, args.d_ff, 
                       args.theta, args.train_steps, args.lr, (args.beta1, args.beta2),
                       args.eps, args.weight_decay, device, local_rank, my_auto_wrap_policy, mp_policy)

@@ -491,40 +491,32 @@ def top_p_sampling(probs, p, device):
 
 
 class DataLoader:
-    def __init__(self, dataset, batch_size, device):
-        self.dataset = dataset
-        self.idx = 0
-        self.n = dataset[0].shape[0]
-        self.batch_size = batch_size
-        self.device = device
+    def __init__(self, filename, B, T):
+        self.B = B
+        self.T = T
+        self.dataset = np.load(filename, mmap_mode='r')
+        self.cur_shard_pos = 0
+        self.n_tokens = len(self.dataset)
 
 
     def next_batch(self):
-        # Generate the random sample starting points of size batch_size
-        if self.idx + self.batch_size > self.n:
-            # The remainder to slice from the beginning
-            remain = (self.idx + self.batch_size) - self.n
-            # What's left of the first chunk
-            x = self.dataset[0][self.idx:self.idx+self.batch_size].to(device=self.device)
-            y = self.dataset[1][self.idx:self.idx+self.batch_size].to(device=self.device)
-
-            # Slice the rest
-            x_rest = self.dataset[0][:remain].to(device=self.device)
-            y_rest = self.dataset[1][:remain].to(device=self.device)
-
-            # Concatenate the two
-            x = torch.cat((x, x_rest), dim=0)
-            y = torch.cat((y, y_rest), dim=0)
-
-            # Reset index
-            self.idx = remain
+        B, T = self.B, self.T
         
-        # Slice inputs and targets
-        x = self.dataset[0][self.idx:self.idx+self.batch_size].to(device=self.device)
-        y = self.dataset[1][self.idx:self.idx+self.batch_size].to(device=self.device)
+        # Calculate the slice
+        buf = self.data[self.cur_shard_pos : self.cur_shard_pos + B * T + 1]
 
-        # Move the index
-        self.idx += self.batch_size
+        # Convert to torch and move to GPU only now
+        buf_torch = torch.fron_numpy(buf.astype(np.int64))
 
-        return (x, y)
+        x = buf_torch[:-1].view(B, T) # Inputs
+        y = buf_torch[1:].view(B, T)
+
+        # Advance pointer
+        self.cur_shard_pos += B * T
+
+        # Reset if we hit the end
+        if self.cur_shard_pos + (B * T + 1) > self.n_tokens:
+            self.cur_shard_pos = 0
+
+        return x, y
 
