@@ -7,10 +7,9 @@ import wandb
 import tiktoken
 import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import MixedPrecision
 from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-from torch.distributed.fsdp import MixedPrecision, FullStateDictConfig, StateDictType
-from torch.distributed.checkpoint.state_dict import get_state_dict
 import functools
 import warnings
 import tqdm
@@ -71,37 +70,16 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
     model.train()
 
 
-def fsdp_save_checkpoint(model, optimizer, rank, step_loss, iteration):
-    # FSDP way of saving a checkpoint
-    save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-    with FSDP.state_dict_type(
-        model, StateDictType.FULL_STATE_DICT, save_policy
-    ):
-        model_state_dict, optim_state_dict = get_state_dict(model, optimizer)
-        #cpu_state = model.state_dict()
-    if rank == 0:
-        print("Saving a checkpoint...")
-        save_checkpoint(model_state_dict, optim_state_dict, iteration, temp_path)
-        print("Saved a mid-training checkpoint!")
-    # Update checkpoint loss
-    last_checkpoint_loss = step_loss
-    return last_checkpoint_loss
-
-
 def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_steps, context_length, num_layers, 
                       d_model, num_heads, d_ff, theta, train_steps, a_max, betas, eps, weight_decay,
                       device, rank, autowrap_policy, mp_policy, checkpoint=None):
 
-
-  
-
-
     model = TransformerLM(50257, context_length, num_layers,
                           d_model, num_heads, d_ff, theta, device=device)
-    model.compile()
     
     # Wandb init
     run = None # For global scope
+    pbar = None 
     if rank == 0:
         run = wandb.init(project="gpt-2.5")
         config = run.config
@@ -132,6 +110,8 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
                     device_id=torch.cuda.current_device(),
                     sync_module_states=True)
                  
+    #model.compile()
+
     # Warch model with wandb
     optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
     last_checkpoint_loss = float('inf')
@@ -145,7 +125,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
     if rank == 0:
         if checkpoint is not None:
             # If it does, load it and keep training from the checkpoint
-            i = load_checkpoint(checkpoint, model, optimizer)
+            i = load_checkpoint(checkpoint, model, optimizer, rank)
             print("Continuing training from checkpoint!")
         else:
             print("Training from scratch!")
@@ -194,7 +174,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
         if i >= 500 and i % 500 == 0:
             # Save a new checkpoint only if cur_loss < last_loss
             if loss_accum < last_checkpoint_loss:
-                fsdp_save_checkpoint(model, optimizer, rank, loss_accum, i)
+                save_checkpoint(model, optimizer, i, temp_path, rank, loss_accum)
 
             # Run evaluation
             run_evaluation(val_set_loader, model, context_length,
@@ -280,7 +260,8 @@ def main():
     training_together(train_set_loader, val_set_loader, args.batch_size, args.grad_accum_steps, args.context_length,
                       args.num_layers, args.d_model, args.num_heads, args.d_ff, 
                       args.theta, args.train_steps, args.lr, (args.beta1, args.beta2),
-                      args.eps, args.weight_decay, device, local_rank, my_auto_wrap_policy, mp_policy)
+                      args.eps, args.weight_decay, device, local_rank, my_auto_wrap_policy, mp_policy,
+                      temp_path)
     
     dist.barrier()
     cleanup()

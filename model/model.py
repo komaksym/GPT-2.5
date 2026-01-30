@@ -10,6 +10,9 @@ from typing import Optional
 import numpy.typing as npt
 import typing
 import os
+from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
+from torch.distributed.fsdp import FullStateDictConfig, StateDictType
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 
 class Linear(nn.Module):
@@ -411,26 +414,60 @@ def to_cpu(obj):
 
 
 def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-                    iteration: int, out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes]):
+                    iteration: int, out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
+                    rank, step_loss):
 
-    # Join dicts into a single checkpoint dict
-    checkpoint = {"model_state": model} | \
-                 {"optimizer_state": optimizer} | \
+    # FSDP way of saving a checkpoint
+    save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    with FSDP.state_dict_type(
+        model, StateDictType.FULL_STATE_DICT, save_policy
+    ):
+        model_state_dict, optim_state_dict = get_state_dict(model, optimizer)
+        #cpu_state = model.state_dict()
+    if rank == 0:
+        print("Saving a checkpoint...")
+        # Join dicts into a single checkpoint dict
+        checkpoint = {"model_state": model_state_dict} | \
+                 {"optimizer_state": optim_state_dict} | \
                  {"iteration_state": iteration}
-    # Save
-    torch.save(checkpoint, out)
+        # Save
+        torch.save(checkpoint, out)
+        print("Saved a mid-training checkpoint!")
 
+    # Update checkpoint loss
+    last_checkpoint_loss = step_loss
+    return last_checkpoint_loss
+   
 
-def load_checkpoint(src: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
-                    model: torch.nn.Module, optimizer: torch.optim.Optimizer):
-    # Load the checkpoint dict
-    checkpoint = torch.load(src)
+def load_checkpoint(src, model, optimizer, rank):
+    load_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
 
-    # Extract dicts from the checkpoint and load state dicts
-    model.load_state_dict(checkpoint["model_state"])
-    optimizer.load_state_dict(checkpoint["optimizer_state"])
-    # Return iteration number
-    return checkpoint["iteration_state"]['iteration']
+    # 1. Only Rank 0 reads from disk
+    checkpoint = None
+    if rank == 0:
+        checkpoint = torch.load(src, map_location="cpu", weights_only=False)
+
+    # 2. Set the context so FSDP knows we are dealing with FULL state dicts
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, load_cfg):
+        # 3. Pull the model state
+        # On Rank 0, this is the dict. On other ranks, it's None.
+        state_dict = checkpoint["model_state"] if rank == 0 else None
+        
+        # CRITICAL: FSDP needs to see this call within the context manager
+        # It will handle broadcasting the shards from Rank 0 to others.
+        model.load_state_dict(state_dict)
+
+        # 4. Pull the optimizer state
+        optim_state = checkpoint["optimizer_state"] if rank == 0 else None
+        
+        # Use the FSDP-specific optimizer load method
+        flattened_osd = FSDP.optim_state_dict_to_load(
+            model, optimizer, optim_state
+        )
+        optimizer.load_state_dict(flattened_osd)
+
+    # Return iteration (only valid on rank 0 based on your logic)
+    return checkpoint["iteration_state"]['iteration'] if rank == 0 else None
 
 
 def sample_data(dataset, batch_size, device):
