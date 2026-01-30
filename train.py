@@ -19,6 +19,7 @@ warnings.filterwarnings("ignore")
 temp_path = "checkpoints/mid_training_checkpoint.pt"
 final_path = "checkpoints/final_checkpoint.pt"
 
+VOCAB_SIZE = 50257
 TRAINING_SET_DATA_CREATION_BATCH_SIZE = 1000000
 VAL_SET_DATA_CREATION_BATCH_SIZE = 100000
 
@@ -74,7 +75,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
                       d_model, num_heads, d_ff, theta, train_steps, a_max, betas, eps, weight_decay,
                       device, rank, autowrap_policy, mp_policy, checkpoint=None):
 
-    model = TransformerLM(50257, context_length, num_layers,
+    model = TransformerLM(VOCAB_SIZE, context_length, num_layers,
                           d_model, num_heads, d_ff, theta, device=device)
     
     # Wandb init
@@ -110,7 +111,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
                     device_id=torch.cuda.current_device(),
                     sync_module_states=True)
                  
-    #model.compile()
+    model.compile()
 
     # Warch model with wandb
     optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
@@ -170,15 +171,16 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
             # Increment pbar
             pbar.update(1)
 
-        # Save checkpoint and run validation every x steps
-        if i >= 500 and i % 500 == 0:
+        # Run evaluation
+        if i >= 100 and i % 100 == 0:
+            run_evaluation(val_set_loader, model, context_length,
+                           device, run, rank, i)
+
+        # Save checkpoint
+        elif i >= 500 and i % 500 == 0:
             # Save a new checkpoint only if cur_loss < last_loss
             if loss_accum < last_checkpoint_loss:
                 save_checkpoint(model, optimizer, i, temp_path, rank, loss_accum)
-
-            # Run evaluation
-            run_evaluation(val_set_loader, model, context_length,
-                           device, run, rank, i)
 
         # If about to finish training, delete the mid training checkpoint
         # And save the full training checkpoint
@@ -189,7 +191,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
                     os.remove(temp_path)
                     print("Removed mid-training checkpoint!")
                 # Create a final checkpoint
-                fsdp_save_checkpoint(model, optimizer, rank, loss_accum, i)
+                save_checkpoint(model, optimizer, rank, loss_accum, i)
                 print("Saved final checkpoint!")
 
         # Next training step
@@ -260,8 +262,7 @@ def main():
     training_together(train_set_loader, val_set_loader, args.batch_size, args.grad_accum_steps, args.context_length,
                       args.num_layers, args.d_model, args.num_heads, args.d_ff, 
                       args.theta, args.train_steps, args.lr, (args.beta1, args.beta2),
-                      args.eps, args.weight_decay, device, local_rank, my_auto_wrap_policy, mp_policy,
-                      temp_path)
+                      args.eps, args.weight_decay, device, local_rank, my_auto_wrap_policy, mp_policy)
     
     dist.barrier()
     cleanup()
