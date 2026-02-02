@@ -520,7 +520,7 @@ class DataLoader:
     def __init__(self, filename, B, T):
         self.B = B
         self.T = T
-        self.dataset = np.memmap(filename, dtype=np.uint16, mmap_mode='r')
+        self.dataset = np.memmap(filename, dtype=np.uint16, mode='r')
         self.cur_shard_pos = 0
         self.n_tokens = len(self.dataset)
 
