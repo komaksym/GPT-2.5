@@ -188,9 +188,13 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
             run.log({"generated_sequences": master_table}) 
 
         # Save checkpoint
-        elif i >= 500 and i % 500 == 0:
+        elif i >= 200 and i % 200 == 0:
             # Save a new checkpoint only if cur_loss < last_loss
             if loss_accum < last_checkpoint_loss:
+                print("Saving a checkpoint...")
+                # Create a folder
+                folder_name = temp_path.split("/")[0]
+                os.makedirs(folder_name, exist_ok=True)
                 save_checkpoint(model, optimizer, i, temp_path, rank, loss_accum)
 
         # If about to finish training, delete the mid training checkpoint
@@ -281,3 +285,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+"""
+To run the script:
+uv run torchrun --nproc_per_node 1 train.py --batch_size 1 --grad_accum_steps 1 --context_length 1024 --num_layers 12 --d_model 768 --num_heads 12 --d_ff 2048 --theta 10000 --train_steps 20000 --lr 6e-4 --beta1 0.9 --beta2 0.95 --eps 1e-8 --weight_decay 0.1
+
+"""
