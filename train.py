@@ -69,6 +69,7 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
                 print(seq)
 
     model.train()
+    return generated_sqs
 
 
 def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_steps, context_length, num_layers, 
@@ -175,9 +176,15 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
 
         # Run evaluation
         if i >= 100 and i % 100 == 0:
+            # Wandb table for tracking generated sequences
+            table = wandb.Table(columns=["predictions"])
             generated_seqs = run_evaluation(val_set_loader, model, context_length,
                            device, run, rank, i)
+            # Populate the wandb table
+            for seq in generated_seqs:
+                table.add_data(seq)
             
+            run.log({f"generated_sequences: {table}"}, step=i)
 
         # Save checkpoint
         elif i >= 500 and i % 500 == 0:
