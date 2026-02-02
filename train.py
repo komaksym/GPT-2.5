@@ -60,8 +60,8 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
             run.log({"val_loss": val_loss.item()})
 
         # Run generation
-        generated_sqs = generate("Once upon a time,", 20, context_length, model, 
-                temp=0.8, top_p=0.9, device=device)
+        generated_sqs = generate("Once upon a time,", max_tokens=50, context_length=context_length, 
+                                batch_size=5, model=model, temp=0.8, top_p=0.9, device=device)
 
         # Print generated sentences
         if rank == 0:
@@ -78,6 +78,9 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
     model = TransformerLM(VOCAB_SIZE, context_length, num_layers,
                           d_model, num_heads, d_ff, theta, device=device)
     
+    # Torch compile the model
+    model.compile()
+
     # Wandb init
     run = None # For global scope
     pbar = None 
@@ -111,7 +114,6 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
                     device_id=torch.cuda.current_device(),
                     sync_module_states=True)
                  
-    model.compile()
 
     # Warch model with wandb
     optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
@@ -173,8 +175,9 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
 
         # Run evaluation
         if i >= 100 and i % 100 == 0:
-            run_evaluation(val_set_loader, model, context_length,
+            generated_seqs = run_evaluation(val_set_loader, model, context_length,
                            device, run, rank, i)
+            
 
         # Save checkpoint
         elif i >= 500 and i % 500 == 0:
