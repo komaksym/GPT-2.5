@@ -276,10 +276,11 @@ def cross_entropy_loss(inputs, targets):
 
     # LogSumExp trick for numerical stability:
     log_probs = softmax(inputs, dim=-1, is_log=True)
-    
+
     # Pick out the log probs for the correct classes
-    b = torch.arange(B).unsqueeze(1)
-    t = torch.arange(T).unsqueeze(0)
+    b = torch.arange(B, device=inputs.device).unsqueeze(1)
+    t = torch.arange(T, device=inputs.device).unsqueeze(0)
+
     log_probs_correct = log_probs[b, t, targets]
     
     # Mean negative log likelihood
