@@ -18,7 +18,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 class Linear(nn.Module):
     def __init__(self, in_features, out_features, device=None, dtype=None):
         super().__init__()
-        # Specify mean for the param initialization
+        # Specify Xavier initialization
         mean, std = 0, np.sqrt(2 / (in_features + out_features))
         # Init the params from the normal distribution with said mean and std
         param = torch.normal(
@@ -90,10 +90,18 @@ class SwiGLU(nn.Module):
         self.d_ff = (8 / 3) * d_model if not d_ff else d_ff
         assert self.d_ff % 64 == 0, "The dimensionality of the feedforward is not a multiple of 64"
 
-        # init params
-        self.w1 = nn.Parameter(data=torch.randn((d_ff, d_model), device=device, dtype=dtype))
-        self.w3 = nn.Parameter(data=torch.randn((d_ff, d_model), device=device, dtype=dtype))
-        self.w2 = nn.Parameter(data=torch.randn((d_model, d_ff), device=device, dtype=dtype))
+        # Specify Xavier initialization
+        mean, std = 0, np.sqrt(2 / (d_model + d_ff))
+
+        # Init the params from the normal distribution with said mean and std
+        self.w1 = nn.Parameter(data=torch.normal(mean, std, (d_ff, d_model), device=device, dtype=dtype))
+        self.w3 = nn.Parameter(data=torch.normal(mean, std, (d_ff, d_model), device=device, dtype=dtype))
+        self.w2 = nn.Parameter(data=torch.normal(mean, std, (d_model, d_ff), device=device, dtype=dtype))
+
+        # Truncate
+        nn.init.trunc_normal_(self.w1, a=-3 * std, b=3 * std)
+        nn.init.trunc_normal_(self.w3, a=-3 * std, b=3 * std)
+        nn.init.trunc_normal_(self.w2, a=-3 * std, b=3 * std)  
 
     def forward(self, x):
         # Run swiglu
