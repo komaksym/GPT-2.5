@@ -383,26 +383,6 @@ def gradient_clipping(params, max_l2_norm):
             p.grad.mul_(scale)
 
 
-def data_loading(dataset: npt.NDArray, batch_size: int,
-                 context_length: int, device: str) -> tuple[torch.Tensor, torch.Tensor]:
-    # Preallocate x's and y's
-    inputs = torch.zeros(batch_size, context_length, device=device, dtype=torch.long)
-    targets = torch.zeros(batch_size, context_length, device=device, dtype=torch.long)
-
-    # Number of data points
-    n = dataset.shape[0]
-
-    # Generate the random sample starting points of size batch_size
-    random_samples = torch.randint(0, n - context_length, (batch_size, ))
-
-    # Allocate the samples
-    for batch, i in enumerate(random_samples):
-        inputs[batch] = torch.tensor(dataset[i : i + context_length])
-        targets[batch] = torch.tensor(dataset[i + 1 : i + 1 + context_length])
-    
-    return (inputs, targets)
-
-
 def to_cpu(obj):
     if isinstance(obj, torch.Tensor):
         return obj.cpu()
