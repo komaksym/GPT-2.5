@@ -5,12 +5,12 @@ import tiktoken
 import math
 import torch.nn as nn
 from einops import einsum, rearrange, reduce
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from typing import Optional
 import numpy.typing as npt
 import typing
 import os
-from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
+from torch.distributed.checkpoint.state_dict import get_state_dict
 from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
@@ -248,10 +248,10 @@ class TransformerLM(nn.Module):
         super().__init__()
 
         self.emb = Embedding(vocab_size, d_model, device=device)
-        self.tblocks = [
+        self.tblocks = nn.ModuleList(
             TransformerBlock(d_model, num_heads, d_ff, theta, context_length, device=device)
             for _ in range(num_layers)
-        ]
+        )
         self.norm = RMSNorm(d_model, device=device)
         self.linear = Linear(d_model, vocab_size, device=device)
 
