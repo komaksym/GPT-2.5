@@ -455,7 +455,7 @@ def sample_data(dataset, batch_size, device):
 
 
 def generate(prompt, max_tokens, context_length, batch_size, model, temp, top_p, device):
-    enc = tiktoken.get_encoding("o200k_base")
+    enc = tiktoken.get_encoding("gpt2")
     sentences = []
 
     for i in range(batch_size):
@@ -531,3 +531,37 @@ class DataLoader:
 
         return x, y
 
+
+from deepeval.models.base_model import DeepEvalBaseLLM
+class MyGPT(DeepEvalBaseLLM):
+    def __init__(self, model, tokenizer):
+        self.model = model
+        self.tokenizer = tokenizer
+    
+    def load_model(self):
+        return self.model
+    
+    def generate_(self, prompt, max_new_tokens=100):
+        enc = tiktoken.get_encoding("gpt2")
+
+        device = prompt.device
+
+        inputs = torch.tensor(enc.encode(prompt), device=device).unsqueeze(0)
+        for _ in range(max_new_tokens):
+            # generate next token
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                logits, _ = model(inputs)
+            # apply softmax with temperature
+            probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
+            # use top p sampling for next token
+            next_token = top_p_sampling(probs, p=top_p, device=device)
+            # Concatenate the token to the inputs tensor
+            inputs = torch.cat((inputs, next_token.unsqueeze(0)), dim=1)
+            # If generated endoftext = end subsequent generation
+            if enc.decode(next_token.tolist()) == "<|endoftext|>":
+                break
+
+    def generate(self, prompt: str) -> str:
+        model = self.load_model()
+
+        device = "cuda"
