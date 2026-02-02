@@ -106,6 +106,8 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
         config.training_sampled_with_replacement = False if 'train_set_loader' and \
                                                         'val_set_loader' in locals() else True
         run.watch(model)
+        master_table = wandb.Table(columns=["step", "prediction"], log_mode="INCREMENTAL")
+
 
     # If in distributed mode
     if rank is not None and autowrap_policy and mp_policy:
@@ -177,14 +179,13 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
         # Run evaluation
         if i >= 100 and i % 100 == 0:
             # Wandb table for tracking generated sequences
-            table = wandb.Table(columns=["predictions"])
             generated_seqs = run_evaluation(val_set_loader, model, context_length,
                            device, run, rank, i)
             # Populate the wandb table
             for seq in generated_seqs:
-                table.add_data(seq)
+                master_table.add_data(i, seq)
             
-            run.log({f"generated_sequences: {table}"}, step=i)
+            run.log({"generated_sequences": master_table}) 
 
         # Save checkpoint
         elif i >= 500 and i % 500 == 0:
@@ -265,8 +266,8 @@ def main():
             mp_policy = None
 
     # Load the data
-    train_set_loader = DataLoader("ts_train_set_gpt2tok.npy", args.batch_size, args.context_length)
-    val_set_loader = DataLoader("ts_valid_set_gpt2tok.npy", args.batch_size, args.context_length)
+    train_set_loader = DataLoader("ts_v2_train.bin", args.batch_size, args.context_length)
+    val_set_loader = DataLoader("ts_v2_valid.bin", args.batch_size, args.context_length)
 
     # Start training
     training_together(train_set_loader, val_set_loader, args.batch_size, args.grad_accum_steps, args.context_length,
