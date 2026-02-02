@@ -469,11 +469,11 @@ def sample_data(dataset, batch_size, device):
             dataset[1][random_batch_idx:random_batch_idx+batch_size].to(device=device))
 
 
-def generate(prompt, max_tokens, context_length, model, temp, top_p, device):
+def generate(prompt, max_tokens, context_length, batch_size, model, temp, top_p, device):
     enc = tiktoken.get_encoding("o200k_base")
     sentences = []
 
-    for i in range(5):
+    for i in range(batch_size):
         inputs = torch.tensor(enc.encode(prompt), device=device).unsqueeze(0)
         for _ in range(max_tokens):
             # Generate next token
