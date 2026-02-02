@@ -30,7 +30,7 @@ class Linear(nn.Module):
         self.weight = nn.Parameter(data=param)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return einsum(self.weight, x, "d_out d_in, ... d_in -> ... d_out")
+        return x @ self.weight.T
 
 
 class Embedding(nn.Module):
