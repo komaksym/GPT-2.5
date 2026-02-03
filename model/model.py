@@ -256,6 +256,8 @@ class TransformerLM(nn.Module):
     ):
         super().__init__()
 
+        self.device = device
+
         self.emb = Embedding(vocab_size, d_model, device=device)
         self.tblocks = nn.ModuleList(
             TransformerBlock(d_model, num_heads, d_ff, theta, context_length, device=device)
@@ -264,24 +266,25 @@ class TransformerLM(nn.Module):
         self.norm = RMSNorm(d_model, device=device)
         self.linear = Linear(d_model, vocab_size, device=device)
 
-    def generate(self, tokenizer, prompt, max_new_tokens=100, temp=0.8, top_p=0.9):
-        device = prompt.device
-
-        sequence = torch.tensor(tokenizer.encode(prompt), device=device).unsqueeze(0)
+    def generate(self, tokenizer, model_inputs, context_length, max_new_tokens=100, temp=0.8, top_p=0.9):
         for _ in range(max_new_tokens):
             # generate next token
-            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                logits, _ = self.forward(sequence)
+            with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                logits, _ = self.forward(model_inputs)
             # apply softmax with temperature
             probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
             # use top p sampling for next token
-            next_token = top_p_sampling(probs, p=top_p, device=device)
+            next_token = top_p_sampling(probs, p=top_p)
             # Concatenate the token to the inputs tensor
-            sequence = torch.cat((sequence, next_token.unsqueeze(0)), dim=1)
+            model_inputs = torch.cat((model_inputs, next_token), dim=1)
             # If generated endoftext = end subsequent generation
-            if tokenizer.decode(next_token.tolist()) == "<|endoftext|>":
+            if tokenizer.decode(next_token.view(-1).tolist()) == "<|endoftext|>":
                 break
-        return sequence
+            # If the input is larger than the context length, 
+            # Use only the last context length amount of tokens
+            if model_inputs.shape[-1] > context_length:
+                model_inputs = model_inputs[:, -context_length:]
+        return model_inputs
 
     def forward(self, x, targets=None):
         emb = self.emb(x)
@@ -486,38 +489,64 @@ def generate(prompt, max_tokens, context_length, batch_size, model, temp, top_p,
             # Apply softmax with temperature
             probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
             # Use top p sampling for next token
-            next_token = top_p_sampling(probs, p=top_p, device=device)
+            next_token = top_p_sampling(probs, p=top_p)
             # Concatenate the token to the inputs tensor
-            inputs = torch.cat((inputs, next_token.unsqueeze(0)), dim=1)
+            inputs = torch.cat((inputs, next_token), dim=1)
             # If generated endoftext = end subsequent generation
-            if enc.decode(next_token.tolist()) == "<|endoftext|>":
+            if enc.decode([next_token.item()]) == "<|endoftext|>":
                 break
             # If the input is larger than the context length, 
             # Use only the last context length amount of tokens
             if inputs.shape[-1] > context_length:
-                inputs = inputs[-context_length:]
+                inputs = inputs[:, -context_length:]
 
         # Print output
         sentences.append(f"\nGenerated sequence №{i+1}:\n" + enc.decode(inputs[0].tolist()) + "\n")
     return sentences
 
 
-def top_p_sampling(probs, p, device):
-    # Flatten the first dimension
-    probs = torch.flatten(probs)
-    # Sort probabilities
-    sorted_probs, indices = torch.sort(probs, descending=True)
+def top_p_sampling(probs, p):
+    """
+    probs: [Batch Size, Vocab Size] - The raw probabilities (already softmaxed)
+    p: float - The cumulative probability threshold (e.g., 0.9)
+    """
+    
+    # 1. Sort probabilities in descending order
+    # sorted_probs: [Batch, Vocab], sorted_indices: [Batch, Vocab]
+    sorted_probs, sorted_indices = torch.sort(probs, descending=True)
 
-    # Calculate the cumsum
-    cumsum = torch.cumsum(sorted_probs, dim=0)
-    # Get the first index of an element where cumsum > p
-    idx = torch.argmax((cumsum > p).int()).item()
-    # Get the nucleus
-    nucleus = sorted_probs[:idx+1]
-    # Randomly sample a token now
-    token = torch.multinomial(nucleus, 1)
-    # Return the token by looking up in indices
-    return torch.tensor([indices[token]], device=device)
+    # 2. Compute cumulative sum
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+    # 3. Remove tokens with cumulative probability above the threshold (p)
+    # We want to KEEP the first token that crosses the threshold, so we shift the mask right by 1.
+    # Logic: If cumsum[i] > p, then token[i] is usually excluded.
+    # But we want the set to sum to AT LEAST p.
+    sorted_indices_to_remove = cumulative_probs > p
+    
+    # Shift the mask to the right to ensure we keep the first token that crossed the threshold
+    # ...[..., 1:] removes the last column, zero-padding at the start shifts it right.
+    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+    sorted_indices_to_remove[..., 0] = 0  # Always keep the most probable token
+
+    # 4. Zero out the probabilities of removed tokens
+    # We clone to avoid modifying gradients if this were part of a training loop
+    nucleus_probs = sorted_probs.clone()
+    nucleus_probs[sorted_indices_to_remove] = 0.0
+
+    # 5. Renormalize the remaining probabilities
+    # (Optional but good practice: ensure they sum to 1 exactly)
+    nucleus_probs = nucleus_probs / nucleus_probs.sum(dim=-1, keepdim=True)
+
+    # 6. Sample from the modified distribution
+    # sampled_sorted_index: [Batch, 1] (Indices relative to the SORTED array)
+    sampled_sorted_index = torch.multinomial(nucleus_probs, 1)
+
+    # 7. Gather the original indices
+    # We map the index from "sorted space" back to "vocabulary space"
+    original_indices = torch.gather(sorted_indices, -1, sampled_sorted_index)
+
+    return original_indices
 
 
 class DataLoader:
