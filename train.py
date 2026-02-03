@@ -14,7 +14,7 @@ import functools
 import warnings
 import tqdm
 from hellaswag import MyGPT
-from deepeval.benchmarks import HellaSwag
+from deepeval.benchmarks import HellaSwag, LAMBADA
 
 
 warnings.filterwarnings("ignore")
@@ -120,7 +120,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
     # HellaSwag
     my_model = MyGPT(model=model, tokenizer=tiktoken.get_encoding("gpt2"), device=device)
     hellaswag_benchmark = HellaSwag(tasks=[HellaSwagTask.TRIMMING_BRANCHES_OR_HEDGES, HellaSwagTask.BATON_TWIRLING])
-    #lambada_benchmark =
+    lambada_benchmark = LAMBADA(n_problems=10, n_shots=3)
 
     # Warch model with wandb
     optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
@@ -187,7 +187,8 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
                            device, run, rank, i)
             
             # Run HellaSwag
-            hellaswag_results = hellaswag_benchmark.evaluate(my_model, batch_size=5)
+            hellaswag_results = hellaswag_benchmark.evaluate(my_model, batch_size=1)
+            #lambada_results = lambada_benchmark.evaluate(my_model, batch_size=1)
             if master_rank: 
                 # Populate the wandb table
                 for idx, seq in enumerate(generated_seqs):
@@ -198,9 +199,11 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
 
                 # print to console
                 print(f"HellaSwag results: {hellaswag_results}")
+                #print(f"LAMBADA results: {lambada_results}")
 
                 # Log to wandb
                 run.log({"HellaSwag score": hellaswag_results})
+                #run.log({"LAMBADA score": lambada_results})
                 run.log({"generated_sequences": master_table}) 
 
         # Save checkpoint
