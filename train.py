@@ -50,6 +50,7 @@ def cleanup():
 
 def run_evaluation(dataset_loader, model, context_length, device, run, rank, iteration):
     model.eval()
+    master_rank = True if rank == 0 else False
 
     with torch.no_grad():
         # Run validation
@@ -65,11 +66,6 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
         # Run generation
         generated_sqs = generate("Once upon a time,", max_tokens=50, context_length=context_length, 
                                 batch_size=5, model=model, temp=0.8, top_p=0.9, device=device)
-
-        # Print generated sentences
-        if master_rank:
-            for seq in generated_sqs:
-                print(seq)
 
     model.train()
     return generated_sqs
@@ -121,6 +117,9 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
                     device_id=torch.cuda.current_device(),
                     sync_module_states=True)
                  
+    # HellaSwag
+    my_model = MyGPT(model=model, tokenizer=tiktoken.get_encoding("gpt2"))
+    benchmark = HellaSwag()
 
     # Warch model with wandb
     optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
@@ -185,11 +184,22 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
             # Wandb table for tracking generated sequences
             generated_seqs = run_evaluation(val_set_loader, model, context_length,
                            device, run, rank, i)
-            # Populate the wandb table
-            for seq in generated_seqs:
-                master_table.add_data(i, seq)
             
-            if master_rank:
+            # Run HellaSwag
+            hellaswag_results = benchmark.evaluate(my_model, batch_size=5)
+            if master_rank: 
+                # Populate the wandb table
+                for idx, seq in enumerate(generated_seqs):
+                    # Add to the wandb table
+                    master_table.add_data(i, seq)
+                    # print to console
+                    print(f"Generated sequence #{idx}")
+
+                # print to console
+                print(f"HellaSwag results: {hellaswag_results}")
+
+                # Log to wandb
+                run.log({"HellaSwag score": hellaswag_results})
                 run.log({"generated_sequences": master_table}) 
 
         # Save checkpoint
