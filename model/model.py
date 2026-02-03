@@ -264,6 +264,25 @@ class TransformerLM(nn.Module):
         self.norm = RMSNorm(d_model, device=device)
         self.linear = Linear(d_model, vocab_size, device=device)
 
+    def generate(self, tokenizer, prompt, max_new_tokens=100, temp=0.8, top_p=0.9):
+        device = prompt.device
+
+        sequence = torch.tensor(tokenizer.encode(prompt), device=device).unsqueeze(0)
+        for _ in range(max_new_tokens):
+            # generate next token
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                logits, _ = self.forward(sequence)
+            # apply softmax with temperature
+            probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
+            # use top p sampling for next token
+            next_token = top_p_sampling(probs, p=top_p, device=device)
+            # Concatenate the token to the inputs tensor
+            sequence = torch.cat((sequence, next_token.unsqueeze(0)), dim=1)
+            # If generated endoftext = end subsequent generation
+            if tokenizer.decode(next_token.tolist()) == "<|endoftext|>":
+                break
+        return sequence
+
     def forward(self, x, targets=None):
         emb = self.emb(x)
         # Pass embedding through transformer blocks
@@ -530,38 +549,3 @@ class DataLoader:
             self.cur_shard_pos = 0
 
         return x, y
-
-
-from deepeval.models.base_model import DeepEvalBaseLLM
-class MyGPT(DeepEvalBaseLLM):
-    def __init__(self, model, tokenizer):
-        self.model = model
-        self.tokenizer = tokenizer
-    
-    def load_model(self):
-        return self.model
-    
-    def generate_(self, prompt, max_new_tokens=100):
-        enc = tiktoken.get_encoding("gpt2")
-
-        device = prompt.device
-
-        inputs = torch.tensor(enc.encode(prompt), device=device).unsqueeze(0)
-        for _ in range(max_new_tokens):
-            # generate next token
-            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                logits, _ = model(inputs)
-            # apply softmax with temperature
-            probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
-            # use top p sampling for next token
-            next_token = top_p_sampling(probs, p=top_p, device=device)
-            # Concatenate the token to the inputs tensor
-            inputs = torch.cat((inputs, next_token.unsqueeze(0)), dim=1)
-            # If generated endoftext = end subsequent generation
-            if enc.decode(next_token.tolist()) == "<|endoftext|>":
-                break
-
-    def generate(self, prompt: str) -> str:
-        model = self.load_model()
-
-        device = "cuda"
