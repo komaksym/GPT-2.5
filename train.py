@@ -13,6 +13,9 @@ from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 import functools
 import warnings
 import tqdm
+from .hellaswag import MyGPT
+from deepeval.benchmarks import HellaSwag
+
 
 warnings.filterwarnings("ignore")
 
@@ -54,7 +57,7 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             _, val_loss = model(val_inputs, val_labels)
 
-        if rank == 0:
+        if master_rank:
             print(f"step {iteration+1}, val loss: {val_loss.item()}")
             # Log loss in wandb
             run.log({"val_loss": val_loss.item()})
@@ -64,7 +67,7 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
                                 batch_size=5, model=model, temp=0.8, top_p=0.9, device=device)
 
         # Print generated sentences
-        if rank == 0:
+        if master_rank:
             for seq in generated_sqs:
                 print(seq)
 
@@ -85,7 +88,8 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
     # Wandb init
     run = None # For global scope
     pbar = None 
-    if rank == 0:
+    master_rank = True if rank == 0 else False
+    if master_rank:
         run = wandb.init(project="gpt-2.5")
         config = run.config
         config.batch_size = batch_size
@@ -128,7 +132,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
     end_event = torch.cuda.Event(enable_timing=True)
 
     # Check if checkpoint exists
-    if rank == 0:
+    if master_rank:
         if checkpoint is not None:
             # If it does, load it and keep training from the checkpoint
             i = load_checkpoint(checkpoint, model, optimizer, rank)
@@ -169,7 +173,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
         tokens_per_sec = (batch_size * context_length) / (step_time_ms / 1000)
         perplexity = np.exp(loss_accum)
         # Coordinated logging
-        if rank == 0:
+        if master_rank:
             print(f"step {i+1}, loss: {loss_accum:.3f}, perp: {perplexity:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
             # Log loss in wandb
             run.log({"loss": loss_accum, "perplexity": perplexity, "norm": norm, "lr": lr})
@@ -185,29 +189,34 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
             for seq in generated_seqs:
                 master_table.add_data(i, seq)
             
-            run.log({"generated_sequences": master_table}) 
+            if master_rank:
+                run.log({"generated_sequences": master_table}) 
 
         # Save checkpoint
         elif i >= 200 and i % 200 == 0:
             # Save a new checkpoint only if cur_loss < last_loss
             if loss_accum < last_checkpoint_loss:
-                print("Saving a checkpoint...")
+                if master_rank:
+                    print("Saving a checkpoint...")
                 # Create a folder
                 folder_name = temp_path.split("/")[0]
                 os.makedirs(folder_name, exist_ok=True)
                 save_checkpoint(model, optimizer, i, temp_path, rank, loss_accum)
+                if master_rank:
+                    print("Checkpoint was saved.")
 
         # If about to finish training, delete the mid training checkpoint
         # And save the full training checkpoint
         elif i == train_steps - 1:
             if loss_accum < last_checkpoint_loss:
                 # Delete the mid training checkpoint
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                    print("Removed mid-training checkpoint!")
-                # Create a final checkpoint
-                save_checkpoint(model, optimizer, rank, loss_accum, i)
-                print("Saved final checkpoint!")
+                if master_rank:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                        print("Removed mid-training checkpoint!")
+                    # Create a final checkpoint
+                    save_checkpoint(model, optimizer, rank, loss_accum, i)
+                    print("Saved final checkpoint!")
 
         # Next training step
         i += 1
