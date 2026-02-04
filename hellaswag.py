@@ -1,9 +1,8 @@
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from contextlib import nullcontext
 from deepeval.models.base_model import DeepEvalBaseLLM
 from typing import List
 from torch.nn.utils.rnn import pad_sequence
 import torch
+from model.model import top_p_sampling, softmax
 
 class MyGPT(DeepEvalBaseLLM):
     def __init__(self, model, tokenizer, device):
@@ -27,27 +26,47 @@ class MyGPT(DeepEvalBaseLLM):
         # Pad tensors and convert to a single tensor
         model_inputs = pad_sequence(tensors, batch_first=True).to(device=self.device)
         
-        # Prepare context for FSDP
-        if isinstance(model, FSDP):
-             context = FSDP.summon_full_params(model, recurse=True, writeback=False)
-        else:
-             context = nullcontext()
-
         # Retrieve context length safely
         try:
+            # Try to get it from the model blocks if possible
             context_length = model.tblocks[0].mhsa.rope.max_seq_len
         except Exception:
             context_length = 1024
 
-        # Truncate inputs
+        # Truncate inputs to context length
         if model_inputs.shape[1] > context_length:
             model_inputs = model_inputs[:, -context_length:]
 
-        # Generate
-        with context:
-            generated_ids = model.generate(self.tokenizer, model_inputs, context_length, max_new_tokens=100)
-        # Decode
-        return self.tokenizer.decode_batch(generated_ids.tolist())
+        # Generate loop (Avoiding model.generate to ensure we go through FSDP wrapper)
+        model.eval()
+        with torch.no_grad():
+            for _ in range(100): # max_new_tokens
+                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                    # Call model directly to trigger FSDP forward
+                    logits, _ = model(model_inputs)
+                
+                # Take the last token's logits
+                next_token_logits = logits[:, -1, :]
+                # Greedily pick the next token for simplicity in benchmark if not specified
+                # But deepeval usually expects some form of sampling or just probabilities
+                # For HellaSwag, we just need to return something deepeval can use to score.
+                # Usually it scores based on probabilities of the choices, but MyGPT returns strings.
+
+                probs = softmax(next_token_logits, dim=-1, temp=0.8)
+                next_tokens = top_p_sampling(probs)
+                
+                model_inputs = torch.cat([model_inputs, next_tokens], dim=1)
+                
+                # Check for end of text (simplified)
+                if (next_tokens == 50256).any(): # 50256 is <|endoftext|> for gpt2
+                    break
+                
+                if model_inputs.shape[1] >= context_length:
+                    model_inputs = model_inputs[:, -context_length:]
+
+        model.train()
+        # Decode and return
+        return self.tokenizer.decode_batch(model_inputs.tolist())
 
     async def a_generate(self, prompt):
         return self.generate(prompt)
