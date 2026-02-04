@@ -196,18 +196,18 @@ class MultiheadSelfAttention(nn.Module):
         self.d_k = self.d_v = d_model // num_heads
         self.num_heads = num_heads
 
-        self.Wq = nn.Parameter(torch.randn(d_model, d_model, device=device))
-        self.Wk = nn.Parameter(torch.randn(d_model, d_model, device=device))
-        self.Wv = nn.Parameter(torch.randn(d_model, d_model, device=device))
-        self.Wo = nn.Parameter(torch.randn(d_model, d_model, device=device))
+        self.Wq = Linear(d_model, d_model, device=device)
+        self.Wk = Linear(d_model, d_model, device=device)
+        self.Wv = Linear(d_model, d_model, device=device)
+        self.Wo = Linear(d_model, d_model, device=device)
 
         if theta is not None and max_seq_len is not None:
             self.rope = RoPE(theta, self.d_k, max_seq_len, device)
 
     def forward(self, x, token_positions=None):
-        Q = x @ self.Wq.T
-        K = x @ self.Wk.T
-        V = x @ self.Wv.T
+        Q = self.Wq(x)
+        K = self.Wk(x)
+        V = self.Wv(x)
 
         # Split Q, K, V into heads
         Q = rearrange(Q, "b t (h d) -> b h t d", h=self.num_heads)
@@ -229,7 +229,7 @@ class MultiheadSelfAttention(nn.Module):
 
         # Concat heads
         out = rearrange(out, "b h t d -> b t (h d)")
-        return torch.einsum("hd,btd->bth", self.Wo, out)
+        return self.Wo(out)
 
 
 class TransformerBlock(nn.Module):
