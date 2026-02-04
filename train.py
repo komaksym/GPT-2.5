@@ -1,21 +1,32 @@
-from model.model import *
 import argparse
-import numpy as np
-import torch
+import functools
 import os
-import wandb
+import warnings
+
+import numpy as np
 import tiktoken
+import torch
 import torch.distributed as dist
+import tqdm
+import wandb
+from deepeval.benchmarks import HellaSwag
+from deepeval.benchmarks.tasks import HellaSwagTask
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-from deepeval.benchmarks.tasks import HellaSwagTask
-import functools
-import warnings
-import tqdm
-from hellaswag import MyGPT
-from deepeval.benchmarks import HellaSwag, LAMBADA
 
+from hellaswag import MyGPT
+from model.model import (
+    AdamW,
+    DataLoader,
+    TransformerBlock,
+    TransformerLM,
+    generate,
+    gradient_clipping,
+    learning_rate_schedule,
+    load_checkpoint,
+    save_checkpoint,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -218,7 +229,7 @@ def training_together(
             pbar.update(1)
 
         # Run evaluation
-        if i % 10 == 0:
+        if i % 100 == 0:
             # Wandb table for tracking generated sequences
             generated_seqs = run_evaluation(
                 val_set_loader, model, context_length, device, run, rank, i
@@ -228,7 +239,7 @@ def training_together(
             hellaswag_results = hellaswag_benchmark.evaluate(my_model, batch_size=5)
             if master_rank:
                 # Populate the wandb table
-                for idx, seq in enumerate(generated_seqs):
+                for seq in generated_seqs:
                     # Add to the wandb table
                     master_table.add_data(i, seq)
                     print(seq)
@@ -237,8 +248,7 @@ def training_together(
                 print(f"HellaSwag results: {hellaswag_results}")
 
                 # Log to wandb
-                run.log({"HellaSwag score": hellaswag_results})
-                run.log({"generated_sequences": master_table})
+                run.log({"generated_sequences": master_table, "HellaSwag score": hellaswag_results})
 
         # Save checkpoint
         elif i >= 500 and i % 500 == 0:
@@ -249,7 +259,9 @@ def training_together(
                 # Create a folder
                 folder_name = temp_path.split("/")[0]
                 os.makedirs(folder_name, exist_ok=True)
-                save_checkpoint(model, optimizer, i, temp_path, rank, loss_accum)
+                save_checkpoint(model, optimizer, i, temp_path, rank)
+                # Update last checkpoint loss
+                last_checkpoint_loss = loss_accum
                 if master_rank:
                     print("Checkpoint was saved.")
 
@@ -263,8 +275,10 @@ def training_together(
                         os.remove(temp_path)
                         print("Removed mid-training checkpoint!")
                     # Create a final checkpoint
-                    save_checkpoint(model, optimizer, i, final_path, rank, loss_accum)
+                    save_checkpoint(model, optimizer, i, final_path, rank)
                     print("Saved final checkpoint!")
+                # Update last checkpoint loss
+                last_checkpoint_loss = loss_accum
 
         # Next training step
         i += 1
@@ -350,7 +364,6 @@ def main():
         local_rank,
         my_auto_wrap_policy,
         mp_policy,
-        temp_path,
     )
 
     dist.barrier()

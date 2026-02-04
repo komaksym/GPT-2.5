@@ -1,17 +1,17 @@
-import numpy as np
-import torch
-import torch.nn.functional as F
-import tiktoken
 import math
-import torch.nn as nn
-from einops import einsum, rearrange, reduce
+import os
+import typing
 from collections.abc import Callable
 from typing import Optional
-import numpy.typing as npt
-import typing
-import os
-from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
+
+import numpy as np
+import tiktoken
+import torch
 import torch.distributed as dist
+import torch.nn as nn
+import torch.nn.functional as F
+from einops import rearrange, reduce
+from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
 from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
@@ -424,7 +424,6 @@ def save_checkpoint(
     iteration: int,
     out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
     rank,
-    step_loss,
 ):
 
     # FSDP way of saving a checkpoint
@@ -443,10 +442,6 @@ def save_checkpoint(
         # Save
         torch.save(checkpoint, out)
         print("Saved a mid-training checkpoint!")
-
-    # Update checkpoint loss
-    last_checkpoint_loss = step_loss
-    return last_checkpoint_loss
 
 
 def load_checkpoint(checkpoint_path, fsdp_model, optimizer, rank):
