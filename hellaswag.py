@@ -4,6 +4,7 @@ from torch.nn.utils.rnn import pad_sequence
 import torch
 from model.model import top_p_sampling, softmax
 
+
 class MyGPT(DeepEvalBaseLLM):
     def __init__(self, model, tokenizer, device):
         self.model = model
@@ -47,11 +48,8 @@ class MyGPT(DeepEvalBaseLLM):
                 
                 # Take the last token's logits
                 next_token_logits = logits[:, -1, :]
-                # Greedily pick the next token for simplicity in benchmark if not specified
-                # But deepeval usually expects some form of sampling or just probabilities
-                # For HellaSwag, we just need to return something deepeval can use to score.
-                # Usually it scores based on probabilities of the choices, but MyGPT returns strings.
 
+                # Pick next tokens
                 probs = softmax(next_token_logits, dim=-1, temp=0.8)
                 next_tokens = top_p_sampling(probs)
                 
