@@ -266,26 +266,6 @@ class TransformerLM(nn.Module):
         self.norm = RMSNorm(d_model, device=device)
         self.linear = Linear(d_model, vocab_size, device=device)
 
-    def generate(self, tokenizer, model_inputs, context_length, max_new_tokens=100, temp=0.8, top_p=0.9):
-        for _ in range(max_new_tokens):
-            # generate next token
-            with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                logits, _ = self.forward(model_inputs)
-            # apply softmax with temperature
-            probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
-            # use top p sampling for next token
-            next_token = top_p_sampling(probs, p=top_p)
-            # Concatenate the token to the inputs tensor
-            model_inputs = torch.cat((model_inputs, next_token), dim=1)
-            # If generated endoftext = end subsequent generation
-            if tokenizer.decode(next_token.view(-1).tolist()) == "<|endoftext|>":
-                break
-            # If the input is larger than the context length, 
-            # Use only the last context length amount of tokens
-            if model_inputs.shape[-1] > context_length:
-                model_inputs = model_inputs[:, -context_length:]
-        return model_inputs
-
     def forward(self, x, targets=None):
         emb = self.emb(x)
         # Pass embedding through transformer blocks
@@ -505,7 +485,7 @@ def generate(prompt, max_tokens, context_length, batch_size, model, temp, top_p,
     return sentences
 
 
-def top_p_sampling(probs, p):
+def top_p_sampling(probs, p=0.9):
     """
     probs: [Batch Size, Vocab Size] - The raw probabilities (already softmaxed)
     p: float - The cumulative probability threshold (e.g., 0.9)
