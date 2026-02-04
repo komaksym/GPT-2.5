@@ -120,7 +120,6 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
     # HellaSwag
     my_model = MyGPT(model=model, tokenizer=tiktoken.get_encoding("gpt2"), device=device)
     hellaswag_benchmark = HellaSwag(tasks=[HellaSwagTask.TRIMMING_BRANCHES_OR_HEDGES, HellaSwagTask.BATON_TWIRLING])
-    lambada_benchmark = LAMBADA(n_problems=10, n_shots=3)
 
     # Warch model with wandb
     optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
@@ -157,7 +156,10 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
             # Compute gradients
             loss.backward()
         # Grad clipping
-        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        if rank is not None:
+            norm = model.clip_grad_norm_(1.0)
+        else:
+            norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         # Learning rate scheduler
         lr = learning_rate_schedule(i, a_max, 0.1 * a_max, 0.05 * train_steps, train_steps)
         for param_group in optimizer.param_groups:
@@ -187,23 +189,19 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
                            device, run, rank, i)
             
             # Run HellaSwag
-            hellaswag_results = hellaswag_benchmark.evaluate(my_model, batch_size=1)
-            #lambada_results = lambada_benchmark.evaluate(my_model, batch_size=1)
+            hellaswag_results = hellaswag_benchmark.evaluate(my_model, batch_size=5)
             if master_rank: 
                 # Populate the wandb table
                 for idx, seq in enumerate(generated_seqs):
                     # Add to the wandb table
                     master_table.add_data(i, seq)
-                    # print to console
-                    print(f"Generated sequence #{idx}:\n {seq}")
+                    print(seq)
 
                 # print to console
                 print(f"HellaSwag results: {hellaswag_results}")
-                #print(f"LAMBADA results: {lambada_results}")
 
                 # Log to wandb
                 run.log({"HellaSwag score": hellaswag_results})
-                #run.log({"LAMBADA score": lambada_results})
                 run.log({"generated_sequences": master_table}) 
 
         # Save checkpoint
@@ -229,13 +227,14 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
                         os.remove(temp_path)
                         print("Removed mid-training checkpoint!")
                     # Create a final checkpoint
-                    save_checkpoint(model, optimizer, rank, loss_accum, i)
+                    save_checkpoint(model, optimizer, i, final_path, rank, loss_accum)
                     print("Saved final checkpoint!")
 
         # Next training step
         i += 1
     # Close progress bar, since the training is finished
-    pbar.close()
+    if master_rank:
+        pbar.close()
 
 
 def main():
