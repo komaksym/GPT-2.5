@@ -159,7 +159,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
         if rank is not None:
             norm = model.clip_grad_norm_(1.0)
         else:
-            norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            norm = gradient_clipping(model.parameters(), 1.0)
         # Learning rate scheduler
         lr = learning_rate_schedule(i, a_max, 0.1 * a_max, 0.05 * train_steps, train_steps)
         for param_group in optimizer.param_groups:
