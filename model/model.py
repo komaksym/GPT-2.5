@@ -10,7 +10,7 @@ from typing import Optional
 import numpy.typing as npt
 import typing
 import os
-from torch.distributed.checkpoint.state_dict import get_state_dict
+from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
 import torch.distributed as dist
 from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -95,14 +95,20 @@ class SwiGLU(nn.Module):
         mean, std = 0, np.sqrt(2 / (d_model + d_ff))
 
         # Init the params from the normal distribution with said mean and std
-        self.w1 = nn.Parameter(data=torch.normal(mean, std, (d_ff, d_model), device=device, dtype=dtype))
-        self.w3 = nn.Parameter(data=torch.normal(mean, std, (d_ff, d_model), device=device, dtype=dtype))
-        self.w2 = nn.Parameter(data=torch.normal(mean, std, (d_model, d_ff), device=device, dtype=dtype))
+        self.w1 = nn.Parameter(
+            data=torch.normal(mean, std, (d_ff, d_model), device=device, dtype=dtype)
+        )
+        self.w3 = nn.Parameter(
+            data=torch.normal(mean, std, (d_ff, d_model), device=device, dtype=dtype)
+        )
+        self.w2 = nn.Parameter(
+            data=torch.normal(mean, std, (d_model, d_ff), device=device, dtype=dtype)
+        )
 
         # Truncate
         nn.init.trunc_normal_(self.w1, a=-3 * std, b=3 * std)
         nn.init.trunc_normal_(self.w3, a=-3 * std, b=3 * std)
-        nn.init.trunc_normal_(self.w2, a=-3 * std, b=3 * std)  
+        nn.init.trunc_normal_(self.w2, a=-3 * std, b=3 * std)
 
     def forward(self, x):
         # Run swiglu
@@ -251,8 +257,15 @@ class TransformerBlock(nn.Module):
 
 class TransformerLM(nn.Module):
     def __init__(
-        self, vocab_size, context_length, num_layers,
-        d_model, num_heads, d_ff, theta=None, device=None
+        self,
+        vocab_size,
+        context_length,
+        num_layers,
+        d_model,
+        num_heads,
+        d_ff,
+        theta=None,
+        device=None,
     ):
         super().__init__()
 
@@ -293,7 +306,7 @@ def cross_entropy_loss(inputs, targets):
     t = torch.arange(T, device=inputs.device).unsqueeze(0)
 
     log_probs_correct = log_probs[b, t, targets]
-    
+
     # Mean negative log likelihood
     loss = -torch.mean(log_probs_correct)
     return loss
@@ -305,11 +318,11 @@ class AdamW(torch.optim.Optimizer):
             raise ValueError(f"Invalid learning rate: {lr}")
         defaults = {"lr": lr, "betas": betas, "epsilon": eps, "weight_decay": weight_decay}
         super().__init__(params, defaults)
-    
+
     def step(self, closure: Optional[Callable] = None):
         loss = None
         if closure is not None:
-             loss = closure()
+            loss = closure()
 
         for group in self.param_groups:
             lr = group["lr"]
@@ -322,38 +335,38 @@ class AdamW(torch.optim.Optimizer):
                     continue
 
                 state = self.state[p]
-                
+
                 # State initialization
                 if len(state) == 0:
                     state["t"] = 0
                     state["m"] = torch.zeros_like(p.data)
                     state["v"] = torch.zeros_like(p.data)
-                
+
                 t = state.get("t") + 1
                 state["t"] = t
-                
+
                 grad = p.grad.data
                 m = state["m"]
                 v = state["v"]
-                
+
                 # Update moments
                 m = m * beta1 + (1 - beta1) * grad
                 v = v * beta2 + (1 - beta2) * grad**2
 
                 state["m"] = m
                 state["v"] = v
-                
+
                 # Bias correction
-                alpha_t = lr * math.sqrt(1 - beta2 ** t) / (1 - beta1 ** t)
-                
+                alpha_t = lr * math.sqrt(1 - beta2**t) / (1 - beta1**t)
+
                 # Update parameters
                 denom = v.sqrt() + eps
-                
+
                 # Apply updates
                 p.data -= alpha_t * m / denom
                 # Apply weight decay
                 p.data -= lr * weight_decay * p.data
-        
+
         return loss
 
 
@@ -363,7 +376,7 @@ def learning_rate_schedule(t, a_max, a_min, T_w, T_c):
         a_t = t / T_w * a_max
     # Cosine annealing
     elif T_w <= t <= T_c:
-        a_t = a_min + 1/2 * (1 + math.cos((t - T_w) / (T_c - T_w) * math.pi)) * (a_max - a_min)
+        a_t = a_min + 1 / 2 * (1 + math.cos((t - T_w) / (T_c - T_w) * math.pi)) * (a_max - a_min)
     # Post annealing
     else:
         a_t = a_min
@@ -377,14 +390,14 @@ def gradient_clipping(params, max_l2_norm):
     total_sq = 0.0
     for p in params:
         if p.grad is not None:
-            total_sq += torch.sum(p.grad ** 2)
-    
+            total_sq += torch.sum(p.grad**2)
+
     total_norm = torch.sqrt(total_sq)
 
     # 2. if we're under threshold, we're done
     if total_norm < max_l2_norm:
         return
-    
+
     # 3. compute scale factor
     scale = max_l2_norm / (total_norm + eps)
 
@@ -405,23 +418,28 @@ def to_cpu(obj):
         return obj
 
 
-def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-                    iteration: int, out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
-                    rank, step_loss):
+def save_checkpoint(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    iteration: int,
+    out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
+    rank,
+    step_loss,
+):
 
     # FSDP way of saving a checkpoint
     save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-    with FSDP.state_dict_type(
-        model, StateDictType.FULL_STATE_DICT, save_policy
-    ):
+    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
         model_state_dict, optim_state_dict = get_state_dict(model, optimizer)
-        #cpu_state = model.state_dict()
+        # cpu_state = model.state_dict()
     if rank == 0:
         print("Saving a checkpoint...")
         # Join dicts into a single checkpoint dict
-        checkpoint = {"model_state": model_state_dict} | \
-                 {"optimizer_state": optim_state_dict} | \
-                 {"iteration_state": iteration}
+        checkpoint = (
+            {"model_state": model_state_dict}
+            | {"optimizer_state": optim_state_dict}
+            | {"iteration_state": iteration}
+        )
         # Save
         torch.save(checkpoint, out)
         print("Saved a mid-training checkpoint!")
@@ -429,21 +447,32 @@ def save_checkpoint(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
     # Update checkpoint loss
     last_checkpoint_loss = step_loss
     return last_checkpoint_loss
-   
+
 
 def load_checkpoint(checkpoint_path, fsdp_model, optimizer, rank):
     load_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
 
     with FSDP.state_dict_type(fsdp_model, StateDictType.FULL_STATE_DICT, load_cfg):
+        checkpoint = None
         if rank == 0:
-            state_dict = torch.load(checkpoint_path)
-            fsdp_model.load_state_dict(state_dict["model_state"])
-            optimizer.load_state_dict(state_dict["optimizer_state"])
+            checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
-        dist.barrier()
+        # Broadcast iteration to all ranks
+        iteration = torch.tensor(checkpoint["iteration_state"] if rank == 0 else 0).to(rank)
+        dist.broadcast(iteration, src=0)
 
-    # Return iteration (only valid on rank 0 based on your logic)
-    return state_dict["iteration_state"]['iteration'] if rank == 0 else None
+        # Load model and optimizer state using set_state_dict
+        model_state = checkpoint["model_state"] if rank == 0 else None
+        optim_state = checkpoint["optimizer_state"] if rank == 0 else None
+
+        set_state_dict(
+            fsdp_model,
+            optimizer,
+            model_state_dict=model_state,
+            optim_state_dict=optim_state,
+        )
+
+    return iteration.item()
 
 
 def generate(prompt, max_tokens, context_length, batch_size, model, temp, top_p, device):
@@ -465,13 +494,15 @@ def generate(prompt, max_tokens, context_length, batch_size, model, temp, top_p,
             # If generated endoftext = end subsequent generation
             if enc.decode([next_token.item()]) == "<|endoftext|>":
                 break
-            # If the input is larger than the context length, 
+            # If the input is larger than the context length,
             # Use only the last context length amount of tokens
             if inputs.shape[-1] > context_length:
                 inputs = inputs[:, -context_length:]
 
         # Print output
-        sentences.append(f"\nGenerated sequence №{i+1}:\n" + enc.decode(inputs[0].tolist()) + "\n")
+        sentences.append(
+            f"\nGenerated sequence №{i + 1}:\n" + enc.decode(inputs[0].tolist()) + "\n"
+        )
     return sentences
 
 
@@ -480,7 +511,7 @@ def top_p_sampling(probs, p=0.9):
     probs: [Batch Size, Vocab Size] - The raw probabilities (already softmaxed)
     p: float - The cumulative probability threshold (e.g., 0.9)
     """
-    
+
     # 1. Sort probabilities in descending order
     # sorted_probs: [Batch, Vocab], sorted_indices: [Batch, Vocab]
     sorted_probs, sorted_indices = torch.sort(probs, descending=True)
@@ -493,7 +524,7 @@ def top_p_sampling(probs, p=0.9):
     # Logic: If cumsum[i] > p, then token[i] is usually excluded.
     # But we want the set to sum to AT LEAST p.
     sorted_indices_to_remove = cumulative_probs > p
-    
+
     # Shift the mask to the right to ensure we keep the first token that crossed the threshold
     # ...[..., 1:] removes the last column, zero-padding at the start shifts it right.
     sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
@@ -523,21 +554,20 @@ class DataLoader:
     def __init__(self, filename, B, T):
         self.B = B
         self.T = T
-        self.dataset = np.memmap(filename, dtype=np.uint16, mode='r')
+        self.dataset = np.memmap(filename, dtype=np.uint16, mode="r")
         self.cur_shard_pos = 0
         self.n_tokens = len(self.dataset)
 
-
     def next_batch(self):
         B, T = self.B, self.T
-        
+
         # Calculate the slice
         buf = self.dataset[self.cur_shard_pos : self.cur_shard_pos + B * T + 1]
 
         # Convert to torch and move to GPU only now
         buf_torch = torch.from_numpy(buf.astype(np.int64))
 
-        x = buf_torch[:-1].view(B, T) # Inputs
+        x = buf_torch[:-1].view(B, T)  # Inputs
         y = buf_torch[1:].view(B, T)
 
         # Advance pointer

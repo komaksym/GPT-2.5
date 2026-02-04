@@ -59,31 +59,59 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
             _, val_loss = model(val_inputs, val_labels)
 
         if master_rank:
-            print(f"step {iteration+1}, val loss: {val_loss.item()}")
+            print(f"step {iteration + 1}, val loss: {val_loss.item()}")
             # Log loss in wandb
             run.log({"val_loss": val_loss.item()})
 
         # Run generation
-        generated_sqs = generate("Once upon a time,", max_tokens=50, context_length=context_length, 
-                                batch_size=5, model=model, temp=0.8, top_p=0.9, device=device)
+        generated_sqs = generate(
+            "Once upon a time,",
+            max_tokens=50,
+            context_length=context_length,
+            batch_size=5,
+            model=model,
+            temp=0.8,
+            top_p=0.9,
+            device=device,
+        )
 
     model.train()
     return generated_sqs
 
 
-def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_steps, context_length, num_layers, 
-                      d_model, num_heads, d_ff, theta, train_steps, a_max, betas, eps, weight_decay,
-                      device, rank, autowrap_policy, mp_policy, checkpoint=None):
+def training_together(
+    train_set_loader,
+    val_set_loader,
+    batch_size,
+    grad_accum_steps,
+    context_length,
+    num_layers,
+    d_model,
+    num_heads,
+    d_ff,
+    theta,
+    train_steps,
+    a_max,
+    betas,
+    eps,
+    weight_decay,
+    device,
+    rank,
+    autowrap_policy,
+    mp_policy,
+    checkpoint=None,
+):
 
-    model = TransformerLM(VOCAB_SIZE, context_length, num_layers,
-                          d_model, num_heads, d_ff, theta, device=device)
-    
+    model = TransformerLM(
+        VOCAB_SIZE, context_length, num_layers, d_model, num_heads, d_ff, theta, device=device
+    )
+
     # Torch compile the model
     model.compile()
 
     # Wandb init
-    run = None # For global scope
-    pbar = None 
+    run = None  # For global scope
+    pbar = None
     master_rank = True if rank == 0 else False
     if master_rank:
         run = wandb.init(project="gpt-2.5")
@@ -103,27 +131,31 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
         config.weight_decay = weight_decay
         config.training_set_data_creation_batch_size = TRAINING_SET_DATA_CREATION_BATCH_SIZE
         config.val_set_data_creation_batch_size = VAL_SET_DATA_CREATION_BATCH_SIZE
-        config.training_sampled_with_replacement = False if 'train_set_loader' and \
-                                                        'val_set_loader' in locals() else True
+        config.training_sampled_with_replacement = (
+            False if "train_set_loader" and "val_set_loader" in locals() else True
+        )
         run.watch(model)
         master_table = wandb.Table(columns=["step", "prediction"], log_mode="INCREMENTAL")
 
-
     # If in distributed mode
     if rank is not None and autowrap_policy and mp_policy:
-        model = FSDP(model.to(rank), 
-                    auto_wrap_policy=autowrap_policy,
-                    mixed_precision=mp_policy,
-                    device_id=torch.cuda.current_device(),
-                    sync_module_states=True)
-                 
+        model = FSDP(
+            model.to(rank),
+            auto_wrap_policy=autowrap_policy,
+            mixed_precision=mp_policy,
+            device_id=torch.cuda.current_device(),
+            sync_module_states=True,
+        )
+
     # HellaSwag
     my_model = MyGPT(model=model, tokenizer=tiktoken.get_encoding("gpt2"), device=device)
-    hellaswag_benchmark = HellaSwag(tasks=[HellaSwagTask.TRIMMING_BRANCHES_OR_HEDGES, HellaSwagTask.BATON_TWIRLING])
+    hellaswag_benchmark = HellaSwag(
+        tasks=[HellaSwagTask.TRIMMING_BRANCHES_OR_HEDGES, HellaSwagTask.BATON_TWIRLING]
+    )
 
     # Warch model with wandb
     optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
-    last_checkpoint_loss = float('inf')
+    last_checkpoint_loss = float("inf")
     i = 0
 
     # Events for timing
@@ -131,15 +163,16 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
     end_event = torch.cuda.Event(enable_timing=True)
 
     # Check if checkpoint exists
-    if master_rank:
-        if checkpoint is not None:
-            # If it does, load it and keep training from the checkpoint
-            i = load_checkpoint(checkpoint, model, optimizer, rank)
-            print("Continuing training from checkpoint!")
-        else:
+    if checkpoint is not None and os.path.exists(checkpoint):
+        # If it does, load it and keep training from the checkpoint
+        i = load_checkpoint(checkpoint, model, optimizer, rank)
+        if master_rank:
+            print(f"Continuing training from checkpoint at iteration {i}!")
+    else:
+        if master_rank:
             print("Training from scratch!")
         pbar = tqdm.tqdm(range(train_steps), colour="blue")
-    
+
     # Start training
     while i < train_steps:
         start_event.record()
@@ -176,7 +209,9 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
         perplexity = np.exp(loss_accum)
         # Coordinated logging
         if master_rank:
-            print(f"step {i+1}, loss: {loss_accum:.3f}, perp: {perplexity:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}")
+            print(
+                f"step {i + 1}, loss: {loss_accum:.3f}, perp: {perplexity:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}"
+            )
             # Log loss in wandb
             run.log({"loss": loss_accum, "perplexity": perplexity, "norm": norm, "lr": lr})
             # Increment pbar
@@ -185,12 +220,13 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
         # Run evaluation
         if i % 10 == 0:
             # Wandb table for tracking generated sequences
-            generated_seqs = run_evaluation(val_set_loader, model, context_length,
-                           device, run, rank, i)
-            
+            generated_seqs = run_evaluation(
+                val_set_loader, model, context_length, device, run, rank, i
+            )
+
             # Run HellaSwag
             hellaswag_results = hellaswag_benchmark.evaluate(my_model, batch_size=5)
-            if master_rank: 
+            if master_rank:
                 # Populate the wandb table
                 for idx, seq in enumerate(generated_seqs):
                     # Add to the wandb table
@@ -202,7 +238,7 @@ def training_together(train_set_loader, val_set_loader, batch_size, grad_accum_s
 
                 # Log to wandb
                 run.log({"HellaSwag score": hellaswag_results})
-                run.log({"generated_sequences": master_table}) 
+                run.log({"generated_sequences": master_table})
 
         # Save checkpoint
         elif i >= 500 and i % 500 == 0:
@@ -268,23 +304,21 @@ def main():
         torch.cuda.set_device(local_rank)
 
         my_auto_wrap_policy = functools.partial(
-            transformer_auto_wrap_policy, 
+            transformer_auto_wrap_policy,
             transformer_layer_cls={TransformerBlock},
         )
 
         bf16_ready = (
-            torch.version.cuda
-            and torch.cuda.is_bf16_supported()
-            and dist.is_nccl_available()
+            torch.version.cuda and torch.cuda.is_bf16_supported() and dist.is_nccl_available()
         )
 
         bfSixteen = MixedPrecision(
-        param_dtype=torch.bfloat16,
-        # Gradient communication precision.
-        reduce_dtype=torch.bfloat16,
-        # Buffer precision.
-        buffer_dtype=torch.bfloat16,
-    )
+            param_dtype=torch.bfloat16,
+            # Gradient communication precision.
+            reduce_dtype=torch.bfloat16,
+            # Buffer precision.
+            buffer_dtype=torch.bfloat16,
+        )
 
         if bf16_ready:
             mp_policy = bfSixteen
@@ -296,11 +330,29 @@ def main():
     val_set_loader = DataLoader("ts_v2_valid.bin", args.batch_size, args.context_length)
 
     # Start training
-    training_together(train_set_loader, val_set_loader, args.batch_size, args.grad_accum_steps, args.context_length,
-                      args.num_layers, args.d_model, args.num_heads, args.d_ff, 
-                      args.theta, args.train_steps, args.lr, (args.beta1, args.beta2),
-                      args.eps, args.weight_decay, device, local_rank, my_auto_wrap_policy, mp_policy)
-    
+    training_together(
+        train_set_loader,
+        val_set_loader,
+        args.batch_size,
+        args.grad_accum_steps,
+        args.context_length,
+        args.num_layers,
+        args.d_model,
+        args.num_heads,
+        args.d_ff,
+        args.theta,
+        args.train_steps,
+        args.lr,
+        (args.beta1, args.beta2),
+        args.eps,
+        args.weight_decay,
+        device,
+        local_rank,
+        my_auto_wrap_policy,
+        mp_policy,
+        temp_path,
+    )
+
     dist.barrier()
     cleanup()
 
