@@ -446,16 +446,6 @@ def load_checkpoint(checkpoint_path, fsdp_model, optimizer, rank):
     return state_dict["iteration_state"]['iteration'] if rank == 0 else None
 
 
-def sample_data(dataset, batch_size, device):
-    # Generate the random sample starting points of size batch_size
-    n = dataset[0].shape[0]
-
-    random_batch_idx = torch.randint(0, n - batch_size, (1, ))
-
-    return (dataset[0][random_batch_idx:random_batch_idx+batch_size].to(device=device),
-            dataset[1][random_batch_idx:random_batch_idx+batch_size].to(device=device))
-
-
 def generate(prompt, max_tokens, context_length, batch_size, model, temp, top_p, device):
     enc = tiktoken.get_encoding("gpt2")
     sentences = []
