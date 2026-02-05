@@ -251,7 +251,7 @@ def training_together(
                 run.log({"generated_sequences": master_table, "HellaSwag score": hellaswag_benchmark.overall_score})
 
         # Save checkpoint
-        elif i >= 500 and i % 500 == 0:
+        if i >= 500 and i % 500 == 0:
             # Save a new checkpoint only if cur_loss < last_loss
             if loss_accum < last_checkpoint_loss:
                 if master_rank:
@@ -267,7 +267,7 @@ def training_together(
 
         # If about to finish training, delete the mid training checkpoint
         # And save the full training checkpoint
-        elif i == train_steps - 1:
+        if i == train_steps - 1:
             if loss_accum < last_checkpoint_loss:
                 # Delete the mid training checkpoint
                 if master_rank:
