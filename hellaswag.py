@@ -1,73 +1,88 @@
-from deepeval.models.base_model import DeepEvalBaseLLM
-from typing import List
-from torch.nn.utils.rnn import pad_sequence
+from datasets import load_dataset
+
 import torch
-from model.model import top_p_sampling, softmax
+from model.model import TransformerLM, softmax
+from train import VOCAB_SIZE
+import numpy as np
 
 
-class MyGPT(DeepEvalBaseLLM):
-    def __init__(self, model, tokenizer, device):
-        self.model = model
-        self.tokenizer = tokenizer
-        self.device=device
-    
-    def load_model(self):
-        return self.model
-    
-    def generate(self, prompt):
-        return self.batch_generate(prompt)[0]
-    
-    def batch_generate(self, prompts: List[str]) -> List[str]:
-        model = self.load_model()
-
-        # Convert to tokens
-        encoded_tokens = self.tokenizer.encode_ordinary_batch(prompts)
-        # Convert to a list of tensors
-        tensors = [torch.tensor(prompt) for prompt in encoded_tokens]
-        # Pad tensors and convert to a single tensor
-        model_inputs = pad_sequence(tensors, batch_first=True).to(device=self.device)
+def calculate_score(model, inputs, labels, completion_mask):
+    """
+    inputs: (B_flat, T) where B_flat = num_examples * 4
+    labels: (num_examples) containing indices [0, 3, 1, ...]
+    completion_mask: (B_flat, T) 
+                     1 for Completion tokens
+                     0 for Context tokens AND Padding tokens
+    """
+    model.eval()
+    with torch.no_grad():
+        # 1. Forward Pass
+        logits, _ = model(inputs)
         
-        # Retrieve context length safely
-        try:
-            # Try to get it from the model blocks if possible
-            context_length = model.tblocks[0].mhsa.rope.max_seq_len
-        except Exception:
-            context_length = 1024
-
-        # Truncate inputs to context length
-        if model_inputs.shape[1] > context_length:
-            model_inputs = model_inputs[:, -context_length:]
-
-        # Generate loop (Avoiding model.generate to ensure we go through FSDP wrapper)
-        model.eval()
-        with torch.no_grad():
-            for _ in range(100): # max_new_tokens
-                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    # Call model directly to trigger FSDP forward
-                    logits, _ = model(model_inputs)
-                
-                # Take the last token's logits
-                next_token_logits = logits[:, -1, :]
-
-                # Pick next tokens
-                probs = softmax(next_token_logits, dim=-1, temp=0.8)
-                next_tokens = top_p_sampling(probs)
-                
-                model_inputs = torch.cat([model_inputs, next_tokens], dim=1)
-                
-                # Check for end of text (simplified)
-                if (next_tokens == 50256).any(): # 50256 is <|endoftext|> for gpt2
-                    break
-                
-                if model_inputs.shape[1] >= context_length:
-                    model_inputs = model_inputs[:, -context_length:]
-
+        # 2. Align Logits (Predict Next Token)
+        # logits: [A, B, C] -> Predicts [B, C, D]
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = inputs[..., 1:].contiguous()
+        shift_mask = completion_mask[..., 1:].contiguous() # Align mask too!
+        
+        # 3. Calculate Log Probs
+        # Use Gather to pick the exact log-prob of the target token
+        log_probs = softmax(shift_logits, dim=-1, is_log=True)
+        
+        # gather expects index to have same dim as input, so unsqueeze -1
+        target_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
+        
+        # 4. Apply Masking (The Safe Way)
+        # We want to sum ONLY the completion tokens.
+        # We zero out the log-probs of Context and Padding.
+        # (Mathematically, adding 0.0 in log-space is "adding nothing to the sum")
+        masked_log_probs = target_log_probs * shift_mask
+        
+        # 5. Sum and Normalize
+        # sum(dim=-1) sums across the sequence length
+        sum_log_probs = masked_log_probs.sum(dim=-1)
+        
+        # Count actual tokens in the completion to normalize
+        # Avoid division by zero with clamp
+        num_completion_tokens = shift_mask.sum(dim=-1).clamp(min=1e-9)
+        
+        # Average Log Probability (Higher is better, closer to 0)
+        scores = sum_log_probs / num_completion_tokens
+        
+        # 6. Reshape and Compare
+        # We assume B_flat is num_examples * 4
+        num_examples = labels.size(0)
+        scores = scores.view(num_examples, -1) # Reshape to [Batch, Options]
+        
+        predictions = torch.argmax(scores, dim=-1) # Pick index of highest prob
+        
+        # Calculate accuracy
+        acc = (predictions == labels).float().mean().item()
+        
         model.train()
-        # Decode and return
-        return self.tokenizer.decode_batch(model_inputs.tolist())
+        return acc
 
-    async def a_generate(self, prompt):
-        return self.generate(prompt)
-    
-    def get_model_name(self):
-        return "MyGPT"
+
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    model = TransformerLM(
+        VOCAB_SIZE,
+        context_length=1024,
+        num_layers=12,
+        d_model=768,
+        num_heads=12,
+        d_ff=2048,
+        theta=10000,
+        device=device
+    )
+
+    dl = DataLoader(5, 1024)
+    #inputs = torch.randint(high=10, size=(6, 7))
+    #mask = torch.tensor([[0, 0, 1, 1, 1, 0, 0], [0, 0, 1, 1, 0, 0, 0],
+                         #[0, 0, 1, 1, 0, 0, 0], [0, 0, 1, 1, 0, 0, 0],
+                         #[0, 0, 1, 1, 1, 0, 0], [0, 0, 1, 1, 0, 0, 0]])
+    #labels = torch.tensor([2, 0])
+    #print(calculate_score(model, inputs, labels, mask))
+
+
