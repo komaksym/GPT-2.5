@@ -236,7 +236,7 @@ def training_together(
             )
 
             # Run HellaSwag
-            hellaswag_results = hellaswag_benchmark.evaluate(my_model, batch_size=5)
+            hellaswag_benchmark.evaluate(my_model, batch_size=5)
             if master_rank:
                 # Populate the wandb table
                 for seq in generated_seqs:
@@ -245,10 +245,10 @@ def training_together(
                     print(seq)
 
                 # print to console
-                print(f"HellaSwag results: {hellaswag_results}")
+                print(f"HellaSwag results: {hellaswag_benchmark.overall_score}")
 
                 # Log to wandb
-                run.log({"generated_sequences": master_table, "HellaSwag score": hellaswag_results})
+                run.log({"generated_sequences": master_table, "HellaSwag score": hellaswag_benchmark.overall_score})
 
         # Save checkpoint
         elif i >= 500 and i % 500 == 0:
@@ -271,15 +271,12 @@ def training_together(
             if loss_accum < last_checkpoint_loss:
                 # Delete the mid training checkpoint
                 if master_rank:
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
-                        print("Removed mid-training checkpoint!")
+                    # Create a folder
+                    folder_name = final_path.split("/")[0]
+                    os.makedirs(folder_name, exist_ok=True)
                     # Create a final checkpoint
                     save_checkpoint(model, optimizer, i, final_path, rank)
                     print("Saved final checkpoint!")
-                # Update last checkpoint loss
-                last_checkpoint_loss = loss_accum
-
         # Next training step
         i += 1
     # Close progress bar, since the training is finished
@@ -340,8 +337,8 @@ def main():
             mp_policy = None
 
     # Load the data
-    train_set_loader = DataLoader("ts_v2_train.bin", args.batch_size, args.context_length)
-    val_set_loader = DataLoader("ts_v2_valid.bin", args.batch_size, args.context_length)
+    train_set_loader = DataLoader("fineweb_train.bin", args.batch_size, args.context_length)
+    val_set_loader = DataLoader("fineweb_test.bin", args.batch_size, args.context_length)
 
     # Start training
     training_together(
