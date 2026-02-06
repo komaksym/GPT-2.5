@@ -2,6 +2,7 @@ import argparse
 import functools
 import os
 import warnings
+from typing import Optional, Callable
 
 import numpy as np
 import tiktoken
@@ -11,6 +12,7 @@ import tqdm
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+import torch.nn as nn
 
 import wandb
 from hellaswag import HellaSwagLoader, compute_hellaswag
@@ -40,11 +42,13 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(42)
 
 
-def is_distributed():
+def is_distributed() -> bool:
+    """Checks if the script is running in a distributed environment (e.g., via torchrun)."""
     return "RANK" in os.environ and "WORLD_SIZE" in os.environ
 
 
-def setup():
+def setup() -> None:
+    """Initializes the distributed process group for NCCL."""
     if not is_distributed():
         print("Running in Single-GPU/CPU mode")
         return
@@ -53,11 +57,24 @@ def setup():
     dist.init_process_group("nccl")
 
 
-def cleanup():
+def cleanup() -> None:
+    """Destroys the distributed process group."""
     dist.destroy_process_group()
 
 
-def run_evaluation(dataset_loader, model, context_length, device, run, rank, iteration):
+def run_evaluation(
+    dataset_loader: DataLoader,
+    model: nn.Module,
+    context_length: int,
+    device: torch.device,
+    run: wandb.sdk.wandb_run.Run,
+    rank: int,
+    iteration: int,
+) -> list[str]:
+    """
+    Runs validation loss calculation and text generation.
+    Returns a list of generated strings.
+    """
     model.eval()
     master_rank = True if rank == 0 else False
 
@@ -89,27 +106,32 @@ def run_evaluation(dataset_loader, model, context_length, device, run, rank, ite
 
 
 def training_together(
-    train_set_loader,
-    val_set_loader,
-    batch_size,
-    grad_accum_steps,
-    context_length,
-    num_layers,
-    d_model,
-    num_heads,
-    d_ff,
-    theta,
-    train_steps,
-    a_max,
-    betas,
-    eps,
-    weight_decay,
-    device,
-    rank,
-    autowrap_policy,
-    mp_policy,
-    checkpoint=None,
-):
+    train_set_loader: DataLoader,
+    val_set_loader: DataLoader,
+    batch_size: int,
+    grad_accum_steps: int,
+    context_length: int,
+    num_layers: int,
+    d_model: int,
+    num_heads: int,
+    d_ff: int,
+    theta: float,
+    train_steps: int,
+    a_max: float,
+    betas: tuple[float, float],
+    eps: float,
+    weight_decay: float,
+    device: torch.device,
+    rank: Optional[int],
+    autowrap_policy: Optional[Callable],
+    mp_policy: Optional[MixedPrecision],
+    checkpoint: Optional[str | os.PathLike] = None,
+) -> None:
+    """
+    Main training orchestration function.
+    Initializes the model, optimizer, wandb, and enters the training loop.
+    Handles FSDP wrapping and checkpoint loading.
+    """
 
     model = TransformerLM(
         VOCAB_SIZE, context_length, num_layers, d_model, num_heads, d_ff, theta, device=device
@@ -281,7 +303,8 @@ def training_together(
         pbar.close()
 
 
-def main():
+def main() -> None:
+    """Entry point for the training script. Parses arguments and starts training."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", type=int)
     parser.add_argument("--grad_accum_steps", type=int)

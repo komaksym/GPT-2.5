@@ -12,9 +12,15 @@ import tiktoken
 import numpy as np
 import os
 from multiprocessing import Process, cpu_count
+import typing # Added import for typing.Any
 
-
-def process_shard(input_file, start_byte, end_byte, worker_id, output_file):
+def process_shard(
+    input_file: str | os.PathLike,
+    start_byte: int,
+    end_byte: int,
+    worker_id: int,
+    output_file: str | os.PathLike,
+) -> None:
     """
     Process a portion (shard) of the input file.
     
@@ -71,7 +77,9 @@ def process_shard(input_file, start_byte, end_byte, worker_id, output_file):
     print(f"Worker {worker_id} finished...")
 
 
-def merge_shards(shard_files, final_output):
+def merge_shards(
+    shard_files: list[str | os.PathLike], final_output: str | os.PathLike
+) -> None:
     """
     Merge all temporary shard files into a single output file.
     
@@ -97,7 +105,7 @@ def merge_shards(shard_files, final_output):
     print(f"Merged into {final_output}")
 
 
-def main():
+def main() -> None:
     """
     Main entry point for parallel dataset tokenization.
     

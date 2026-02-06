@@ -1,3 +1,6 @@
+"""
+Splits the large FineWeb text file into training and testing sets.
+"""
 from tqdm import tqdm
 
 test_lines = 8222001

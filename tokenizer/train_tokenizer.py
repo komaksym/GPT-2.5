@@ -1,26 +1,33 @@
-import regex as re
-from collections import defaultdict
-from tqdm import tqdm
 import json
+import os
+from collections import defaultdict
 from itertools import islice
+from typing import Optional
+import regex as re
+
+from tqdm import tqdm
 
 
 special_tokens = ["<|endoftext|>", "<start>", "<end>"]
 
-vocab_size = 268
+vocab_size = 50257
 num_of_merges = vocab_size - 256
 
 pretok_PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
 
-def read_data(input_path):
+def read_data(input_path: str | os.PathLike) -> str:
+    """Reads the raw text data from a file."""
     with open(input_path) as f:
         corpus = f.read()
     return corpus
 
 
-def strip_of_special_tokens(corpus, special_tokens):
-    """Strips of special tokens to avoid counting them as bytes"""
+def strip_of_special_tokens(corpus: str, special_tokens: list[str]) -> list[str]:
+    """
+    Strips special tokens from the corpus to avoid them being split into bytes.
+    Returns a list of text chunks.
+    """
 
     # Escape | delimiter in special tokens
     escaped_special_tokens = []
@@ -39,8 +46,10 @@ def strip_of_special_tokens(corpus, special_tokens):
 
 
 # Pre-tokenization
-def pretokenize(corpus, ptrn):
-    """Pre-tokenizes on regex pattern and counts words"""
+def pretokenize(corpus: list[str], ptrn: str) -> dict[str, int]:
+    """
+    Applies regex pre-tokenization and counts the frequency of each resulting 'word'.
+    """
 
     counts = {}
     for t in corpus:
@@ -49,8 +58,10 @@ def pretokenize(corpus, ptrn):
     return counts
 
 
-def split_to_bytes(corpus):
-    """Splits words by characters and counts frequency"""
+def split_to_bytes(corpus: dict[str, int]) -> dict[tuple[str, ...], int]:
+    """
+    Splits word keys into tuples of individual characters (strings of length 1).
+    """
 
     counts = {}
     # Count byte pairs
@@ -63,11 +74,17 @@ def split_to_bytes(corpus):
     return counts
 
 
-def count_bytepairs(corpus, bp_to_counts=None, bp_to_words=None, 
-                    merged_words=None, removed_word_freqs=None):
-    """Counts bytepair frequencies in the corpus
-    If ran the first time (no counts provided) then count all byte pairs in the whole corpus
-    If ran consecutively, update counts based on removed words and new merged words"""
+def count_bytepairs(
+    corpus: dict[tuple[str, ...], int],
+    bp_to_counts: Optional[dict[tuple[str, str], int]] = None,
+    bp_to_words: Optional[dict[tuple[str, str], set[tuple[str, ...]]]] = None,
+    merged_words: Optional[set[tuple[str, ...]]] = None,
+    removed_word_freqs: Optional[dict[tuple[str, ...], int]] = None,
+) -> tuple[dict[tuple[str, str], int], dict[tuple[str, str], set[tuple[str, ...]]]]:
+    """
+    Counts bytepair frequencies in the corpus.
+    If provided, it updates existing counts based on merged/removed words for performance.
+    """
 
     # If counts are provided, update only the affected byte pairs
     if bp_to_counts and bp_to_words:
@@ -118,8 +135,14 @@ def count_bytepairs(corpus, bp_to_counts=None, bp_to_words=None,
     return bp_to_counts, bp_to_words
 
 
-def get_mf_pair(counts, counts_to_words):
-    """Takes the most frequent byte pair along with words with that pair and returns them"""
+def get_mf_pair(
+    counts: dict[tuple[str, str], int],
+    counts_to_words: dict[tuple[str, str], set[tuple[str, ...]]],
+) -> tuple[tuple[str, str], set[tuple[str, ...]]]:
+    """
+    Identifies and returns the most frequent byte pair and the set of words containing it.
+    Uses lexicographical order to break ties.
+    """
 
     # Get the max frequency
     maxf = counts[max(counts, key=counts.get)]
@@ -131,10 +154,15 @@ def get_mf_pair(counts, counts_to_words):
     return pair, counts_to_words[pair]
 
 
-def merge(corpus, merge_pair, merge_pair_words):
-    """Merges the word in the corpus
-    by joining two bytes into one and
-    re-assigning the key in the dictionary"""
+def merge(
+    corpus: dict[tuple[str, ...], int],
+    merge_pair: str,
+    merge_pair_words: set[tuple[str, ...]],
+) -> tuple[dict[tuple[str, ...], int], set[tuple[str, ...]], dict[tuple[str, ...], int]]:
+    """
+    Merges a specific byte pair across all words that contain it in the corpus.
+    Returns the updated corpus, the set of newly merged words, and the freqs of removed words.
+    """
 
     # Keeps track of merged words to update byte counting only on these as these only change
     merged_words = set()
@@ -170,15 +198,19 @@ def merge(corpus, merge_pair, merge_pair_words):
     return corpus, merged_words, removed_word_freqs
 
 
-def pair_to_bytes(pair):
-    """Converts a tuple of strings into a tuple of bytes"""
+def pair_to_bytes(pair: tuple[str, str]) -> tuple[bytes, bytes]:
+    """Converts a tuple of strings (characters) into a tuple of bytes."""
 
     return tuple(b.encode("utf-8") for b in pair) # ('a', 'c') -> (b'a', b'c')
 
 
-def train_bpe(input_path, vocab_size, special_tokens):
-    """Trains BPE on given corpus based on specified vocab size
-        and returns vocab and merges"""
+def train_bpe(
+    input_path: str | os.PathLike, vocab_size: int, special_tokens: list[str]
+) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+    """
+    Orchestrates the BPE training process: loading data, pre-tokenizing, and iteratively merging.
+    Returns the final vocabulary (ID to bytes) and the list of merges.
+    """
 
     # Fill the vocab with initial 256 bytes
     vocab = {i: bytes([i]) for i in range(256)}
@@ -231,7 +263,12 @@ def train_bpe(input_path, vocab_size, special_tokens):
     return vocab, merges
 
 
-def save_vocab_n_merges(vocab, merges):
+def save_vocab_n_merges(
+    vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]]
+) -> None:
+    """
+    Serializes the vocabulary and merges to JSON and text files respectively.
+    """
     # Save everything except the first 255 bytes
     vocab = dict(islice(vocab.items(), 256, max(vocab)))
     # Save vocab as json file

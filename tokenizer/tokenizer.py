@@ -1,18 +1,39 @@
 import regex as re
 from .common import gpt2_bytes_to_unicode
 import json
+import os
+import typing
+from collections.abc import Iterable, Generator
 
 
 class Tokenizer:
-    def __init__(self, vocab, merges, special_tokens=None):
+    def __init__(
+        self,
+        vocab: dict[int, bytes],
+        merges: list[tuple[bytes, bytes]],
+        special_tokens: typing.Optional[list[str]] = None,
+    ):
+        """
+        Initializes the Tokenizer with a vocabulary and BPE merges.
+        vocab: Map from token ID to bytes.
+        merges: List of byte pairs to merge.
+        special_tokens: Optional list of special strings to treat as single tokens.
+        """
         self.vocab = vocab
-        self.b_to_i = {v: k for k, v in self.vocab.items()} # Bytes to ints
+        self.b_to_i = {v: k for k, v in self.vocab.items()}  # Bytes to ints
         self.merges = merges
         self.special_tokens = special_tokens
 
     @classmethod
-    def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
-        """Loads vocab and merges from files"""
+    def from_files(
+        cls,
+        vocab_filepath: str | os.PathLike,
+        merges_filepath: str | os.PathLike,
+        special_tokens: typing.Optional[list[str]] = None,
+    ) -> "Tokenizer":
+        """
+        Loads vocabulary and BPE merges from disk (standard GPT-2 format).
+        """
 
         gpt2_byte_decoder = {v: k for k, v in gpt2_bytes_to_unicode().items()}
 
@@ -36,8 +57,11 @@ class Tokenizer:
             }
         return Tokenizer(vocab, merges, special_tokens)
 
-    def encode(self, text):
-        """Encodes a string into a sequence of tokens"""
+    def encode(self, text: str) -> list[int]:
+        """
+        Encodes a string into a sequence of token IDs.
+        Handles special tokens first, then applies GPT-2 pre-tokenization and BPE merges.
+        """
 
         # GPT-2 pretokenization pattern
         pretok_pat = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
@@ -93,8 +117,10 @@ class Tokenizer:
         
         return encoded_str
 
-    def _apply_merges(self, w_b):
-        """Applies merges"""
+    def _apply_merges(self, w_b: list[bytes]) -> list[bytes]:
+        """
+        Sequentially applies BPE merges to a list of bytes.
+        """
 
         for merge in self.merges:
             i = 0
@@ -107,14 +133,18 @@ class Tokenizer:
                     i += 1
         return w_b
         
-    def encode_iterable(self, iterable):
-        """Encodes from an iterable"""
+    def encode_iterable(self, iterable: Iterable[str]) -> Generator[int, None, None]:
+        """
+        Encodes a sequence of strings, yielding token IDs one by one.
+        """
 
         for text in iterable:
             yield from self.encode(text)
 
-    def decode(self, ids):
-        """Decodes a sequence of tokens to a string"""
+    def decode(self, ids: list[int]) -> str:
+        """
+        Decodes a list of token IDs back into a UTF-8 string.
+        """
 
         decoded_bytes = [self.vocab[id] for id in ids]  # Map from integers to bytes
         catted_bytes = b"".join(decoded_bytes)

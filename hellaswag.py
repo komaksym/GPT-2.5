@@ -2,20 +2,35 @@ import torch
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
 
+from typing import Any, Optional
+import torch.nn as nn
 from model.model import softmax
 
 
 class HellaSwagLoader:
-    def __init__(self, B, T, tokenizer):
+    def __init__(self, B: int, T: int, tokenizer: Any):
+        """
+        Initializes the HellaSwag evaluation loader.
+        B: Batch size
+        T: Maximum sequence length
+        tokenizer: Tokenizer instance with encode_batch and _special_tokens
+        """
         self.B = B
         self.T = T
         self.dataset = load_dataset("Rowan/hellaswag", split="validation")
         self.tokenizer = tokenizer
         self.cur_shard_pos = 0
-        self.n_examples = self.dataset.num_rows
-        self.eos_token = self.tokenizer._special_tokens["<|endoftext|>"]
+        self.n_examples = int(self.dataset.num_rows)
+        self.eos_token = int(self.tokenizer._special_tokens["<|endoftext|>"])
 
-    def next_batch(self):
+    def next_batch(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Returns the next batch of padded inputs, ground truth labels, and completion masks.
+        Returns:
+            inputs_padded: (B * 4, T)
+            labels: (B,)
+            completion_mask: (B * 4, T)
+        """
         # Pluck out the context batch from the dataset
         context = self.dataset[self.cur_shard_pos : self.cur_shard_pos + self.B][
             "ctx"
@@ -71,7 +86,13 @@ class HellaSwagLoader:
         return inputs_padded, labels, completion_mask
 
 
-def compute_hellaswag(model, inputs, labels, completion_mask, device):
+def compute_hellaswag(
+    model: nn.Module,
+    inputs: torch.Tensor,
+    labels: torch.Tensor,
+    completion_mask: torch.Tensor,
+    device: torch.device,
+) -> float:
     """
     inputs: (B_flat, T) where B_flat = num_examples * 4
     labels: (num_examples) containing indices [0, 3, 1, ...]

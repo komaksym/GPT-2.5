@@ -10,6 +10,8 @@ import tqdm
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+import torch.nn as nn
+from typing import Optional, Callable
 
 import wandb
 from hellaswag import HellaSwagLoader, compute_hellaswag
@@ -38,27 +40,31 @@ final_path = "checkpoints/final_checkpoint.pt"
 
 
 def train(
-    train_set_loader,
-    val_set_loader,
-    batch_size,
-    grad_accum_steps,
-    context_length,
-    num_layers,
-    d_model,
-    num_heads,
-    d_ff,
-    theta,
-    train_steps,
-    a_max,
-    betas,
-    eps,
-    weight_decay,
-    device,
-    rank,
-    autowrap_policy,
-    mp_policy,
-    checkpoint=None,
-):
+    train_set_loader: DataLoader,
+    val_set_loader: DataLoader,
+    batch_size: int,
+    grad_accum_steps: int,
+    context_length: int,
+    num_layers: int,
+    d_model: int,
+    num_heads: int,
+    d_ff: int,
+    theta: float,
+    train_steps: int,
+    a_max: float,
+    betas: tuple[float, float],
+    eps: float,
+    weight_decay: float,
+    device: torch.device,
+    rank: Optional[int],
+    autowrap_policy: Optional[Callable],
+    mp_policy: Optional[MixedPrecision],
+    checkpoint: Optional[str | os.PathLike] = None,
+) -> None:
+    """
+    Main training function used by the hyperparameter search sweep.
+    Initializes the model and enters the training loop.
+    """
 
     model = TransformerLM(
         VOCAB_SIZE, context_length, num_layers, d_model, num_heads, d_ff, theta, device=device
@@ -228,8 +234,8 @@ def train(
     if master_rank:
         pbar.close()
 
-
-def main():
+def main() -> None:
+    """Entry point for the hyperparameter search worker."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", type=int)
     parser.add_argument("--grad_accum_steps", type=int)

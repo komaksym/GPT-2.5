@@ -3,7 +3,12 @@ import os
 from multiprocessing import Process, cpu_count
 
 
-def process_shard(world_size, rank, ds, out_path):
+import typing
+
+
+def process_shard(
+    world_size: int, rank: int, ds: typing.Any, out_path: str | os.PathLike
+) -> None:
 
     shard = ds.shard(world_size, rank)
 
@@ -13,7 +18,9 @@ def process_shard(world_size, rank, ds, out_path):
             f_out.write(t + "\n")
 
 
-def merge_shards(shard_files, final_output):
+def merge_shards(
+    shard_files: list[str | os.PathLike], final_output: str | os.PathLike
+) -> None:
     print("Merging shards...")
     with open(final_output, "w", encoding="utf-8") as f_out:
         for s_file in shard_files:
