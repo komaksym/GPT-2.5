@@ -2,8 +2,7 @@ import torch
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
 
-from model.model import TransformerLM, softmax
-from train import VOCAB_SIZE
+from model.model import softmax
 
 
 class HellaSwagLoader:
@@ -127,18 +126,3 @@ def compute_hellaswag(model, inputs, labels, completion_mask):
 
         model.train()
         return acc
-
-
-if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = TransformerLM(
-        VOCAB_SIZE,
-        context_length=1024,
-        num_layers=12,
-        d_model=768,
-        num_heads=12,
-        d_ff=2048,
-        theta=10000,
-        device=device,
-    )
