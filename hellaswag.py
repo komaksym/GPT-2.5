@@ -1,4 +1,3 @@
-import tiktoken
 import torch
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
@@ -7,7 +6,7 @@ from model.model import TransformerLM, softmax
 from train import VOCAB_SIZE
 
 
-class DataLoader:
+class HellaSwagLoader:
     def __init__(self, B, T, tokenizer):
         self.B = B
         self.T = T
@@ -73,7 +72,7 @@ class DataLoader:
         return inputs_padded, labels, completion_mask
 
 
-def calculate_score(model, inputs, labels, completion_mask):
+def compute_hellaswag(model, inputs, labels, completion_mask):
     """
     inputs: (B_flat, T) where B_flat = num_examples * 4
     labels: (num_examples) containing indices [0, 3, 1, ...]
@@ -143,7 +142,3 @@ if __name__ == "__main__":
         theta=10000,
         device=device,
     )
-
-    dl = DataLoader(5, 1024, tiktoken.get_encoding("gpt2"))
-    inputs, labels, completion_mask = dl.next_batch()
-    print(calculate_score(model, inputs, labels, completion_mask))
