@@ -329,5 +329,5 @@ if __name__ == "__main__":
 
 
 """
-uv run torchrun --nproc_per_node 2 hyperparam_search.py --batch_size ^C--grad_accum_steps 1 --context_length 1024 --num_layers 12 --d_model 768 --num_heads 12 --d_ff 2048 --theta 10000 --train_steps s 20000 --lr 6e-4 --beta1 0.9 --beta2 0.95 --eps 1e-8 --weight_decay 0.1
+uv run torchrun --nproc_per_node 2 hyperparam_search.py --batch_size 1 --grad_accum_steps 1 --context_length 1024 --num_layers 12 --d_model 768 --num_heads 12 --d_ff 2048 --theta 10000 --train_steps s 20000 --lr 6e-4 --beta1 0.9 --beta2 0.95 --eps 1e-8 --weight_decay 0.1
 """
