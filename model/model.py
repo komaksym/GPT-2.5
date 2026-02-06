@@ -17,24 +17,35 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 
 class Linear(nn.Module):
+    """
+    Standard linear layer with Xavier initialization, but without bias (standard for some LLM architectures).
+    Weights are truncated to stay within 3 standard deviations.
+    """
+
     def __init__(self, in_features, out_features, device=None, dtype=None):
         super().__init__()
-        # Specify Xavier initialization
+        # Specify Xavier initialization: std = sqrt(2 / (fan_in + fan_out))
         mean, std = 0, np.sqrt(2 / (in_features + out_features))
         # Init the params from the normal distribution with said mean and std
         param = torch.normal(
             mean=mean, std=std, size=(out_features, in_features), dtype=dtype, device=device
         )
-        # Truncate
+        # Truncate to avoid outlier weights that can destabilize training
         nn.init.trunc_normal_(param, a=-3 * std, b=3 * std)
         # Init the weight via the nn.Parameter
         self.weight = nn.Parameter(data=param)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (..., in_features)
+        # Returns: (..., out_features)
         return x @ self.weight.T
 
 
 class Embedding(nn.Module):
+    """
+    Standard embedding layer initialized from a normal distribution.
+    """
+
     def __init__(self, num_embeddings, embedding_dim, device=None, dtype=None):
         super().__init__()
         # Specify mean for the param initialization
@@ -43,16 +54,23 @@ class Embedding(nn.Module):
         param = torch.normal(
             mean=mean, std=std, size=(num_embeddings, embedding_dim), dtype=dtype, device=device
         )
-        # Truncate
+        # Truncate to stay within predictable bounds
         nn.init.trunc_normal_(param, a=-3, b=3)
         # Init the embedding via the nn.Parameter
         self.weight = nn.Parameter(data=param)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+        # token_ids: (B, T)
+        # Returns: (B, T, embedding_dim)
         return self.weight[token_ids]
 
 
 class RMSNorm(nn.Module):
+    """
+    Root Mean Square Layer Normalization.
+    Standardized in Llama and other modern transformer architectures for stability.
+    """
+
     def __init__(self, d_model: int, eps: float = 1e-5, device=None, dtype=None):
         super().__init__()
         self.d_model = d_model
@@ -60,19 +78,20 @@ class RMSNorm(nn.Module):
         self.device = device
         self.dtype = dtype
 
-        # Init the learnable gain parameter
+        # Init the learnable gain parameter (initialized to all ones)
         param = torch.tensor([1.0] * d_model, device=device, dtype=dtype)
         self.weight = nn.Parameter(data=param)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Upcast the dtype to float32 to avoid overflowing when squaring the input in rms
+        # x: (B, T, C)
+        # Upcast the dtype to float32 to avoid overflowing/precision loss when squaring the input
         in_dtype = x.dtype
         x = x.to(torch.float32)
-        # Calculate RMS
+        # Calculate RMS = sqrt(mean(x^2) + eps)
         rms = torch.sqrt(1 / self.d_model * reduce(x**2, "B T C -> B T 1", "sum") + self.eps)
-        # Normalize
+        # Normalize: x / RMS * gain_parameter
         rmsnorm = x / rms * self.weight
-        # Downcast back to the initial dtype
+        # Downcast back to the initial dtype (e.g., bfloat16 or float16)
         return rmsnorm.to(dtype=in_dtype)
 
 
@@ -83,18 +102,21 @@ def SiLU(x):
 
 
 class SwiGLU(nn.Module):
-    """SiLU activation function + gating mechanism = SwiGLU"""
+    """
+    SwiGLU activation function (SiLU(xW) * (xV))W2.
+    Commonly used in the feed-forward network of modern transformers.
+    """
 
     def __init__(self, d_model: int, d_ff: int = None, device=None, dtype=None):
         super().__init__()
-        # Init d_ff dimension
+        # Init d_ff dimension (typically 8/3 * d_model in Llama)
         self.d_ff = (8 / 3) * d_model if not d_ff else d_ff
         assert self.d_ff % 64 == 0, "The dimensionality of the feedforward is not a multiple of 64"
 
-        # Specify Xavier initialization
+        # Specify Xavier initialization for weights
         mean, std = 0, np.sqrt(2 / (d_model + d_ff))
 
-        # Init the params from the normal distribution with said mean and std
+        # w1 and w3 are for the gated part; w2 is for the projection back to d_model
         self.w1 = nn.Parameter(
             data=torch.normal(mean, std, (d_ff, d_model), device=device, dtype=dtype)
         )
@@ -105,18 +127,25 @@ class SwiGLU(nn.Module):
             data=torch.normal(mean, std, (d_model, d_ff), device=device, dtype=dtype)
         )
 
-        # Truncate
+        # Truncate weights for stability
         nn.init.trunc_normal_(self.w1, a=-3 * std, b=3 * std)
         nn.init.trunc_normal_(self.w3, a=-3 * std, b=3 * std)
         nn.init.trunc_normal_(self.w2, a=-3 * std, b=3 * std)
 
-    def forward(self, x):
-        # Run swiglu
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, T, d_model)
+        # result = (SiLU(x @ w1^T) * (x @ w3^T)) @ w2^T
         result = (SiLU(x @ self.w1.T) * (x @ self.w3.T)) @ self.w2.T
         return result
 
 
 class RoPE(nn.Module):
+    """
+    Rotary Positional Embedding (RoPE).
+    Rotates pairs of dimensions in the embedding space to encode relative positional information.
+    Ref: https://arxiv.org/abs/2104.09864
+    """
+
     def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
         super().__init__()
         if d_k % 2 != 0:
@@ -127,17 +156,26 @@ class RoPE(nn.Module):
         self.max_seq_len = int(max_seq_len)
         self.device = device if device is not None else torch.device("cpu")
 
+        # Compute frequencies: freq_i = theta^(-2i/d)
         j = torch.arange(self.d_half, dtype=torch.float32, device=self.device)
         inv_freq = self.theta ** (-2.0 * j / float(self.d_k))  # (d_half,)
+
+        # Compute angles for each position: angle = pos * freq
         pos = torch.arange(self.max_seq_len, dtype=torch.float32, device=self.device).unsqueeze(
             1
-        )  # (max_seq_len,1)
+        )  # (max_seq_len, 1)
         angles = pos * inv_freq.unsqueeze(0)  # (max_seq_len, d_half)
 
-        self.register_buffer("cos", torch.cos(angles))
-        self.register_buffer("sin", torch.sin(angles))
+        # Precompute cos and sin buffers for the entire context window
+        self.register_buffer("cos", torch.cos(angles))  # (max_seq_len, d_half)
+        self.register_buffer("sin", torch.sin(angles))  # (max_seq_len, d_half)
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
+        """
+        Applies rotation to the input tensor x based on token_positions.
+        x: (..., seq_len, d_k)
+        token_positions: (..., seq_len)
+        """
         if x.shape[-1] != self.d_k:
             raise ValueError(f"Last dim of x must be d_k={self.d_k}, got {x.shape[-1]}.")
         if token_positions.shape[-1] != x.shape[-2]:
@@ -145,16 +183,20 @@ class RoPE(nn.Module):
                 "token_positions must have same seq_len in its last dim as x's sequence dimension."
             )
 
+        # Retrieve precomputed cos/sin for the specific positions
         token_positions = token_positions.long().to(self.cos.device)
         cos_pos = self.cos[token_positions].to(self.device)  # (..., seq_len, d_half)
-        sin_pos = self.sin[token_positions].to(self.device)
+        sin_pos = self.sin[token_positions].to(self.device)  # (..., seq_len, d_half)
 
+        # Split x into even and odd indices for rotation
         x_even = x[..., 0::2]  # (..., seq_len, d_half)
         x_odd = x[..., 1::2]  # (..., seq_len, d_half)
 
+        # Apply rotation matrix: [cos -sin; sin cos] * [even; odd]
         x_rot_even = x_even * cos_pos - x_odd * sin_pos
         x_rot_odd = x_even * sin_pos + x_odd * cos_pos
 
+        # Recombine into the original d_k shape
         x_rot = torch.stack([x_rot_even, x_rot_odd], dim=-1)  # (..., seq_len, d_half, 2)
         new_shape = list(x.shape[:-2]) + [x.shape[-2], self.d_k]
         x_rot = x_rot.view(*new_shape)
@@ -162,14 +204,18 @@ class RoPE(nn.Module):
 
 
 def softmax(x, dim, is_log=False, temp=1):
-    # Scale x by temperature
+    """
+    Numerically stable Softmax or Log-Softmax implementation.
+    Uses the LogSumExp trick to prevent overflow.
+    """
+    # Scale x by temperature (T=1 is standard, higher T = smoother distribution)
     x_scaled = x / temp
 
-    # LogSumExp trick for numerical stability:
+    # LogSumExp trick: log(sum(exp(x_i))) = m + log(sum(exp(x_i - m))) where m = max(x)
     m = torch.max(x_scaled, dim=dim, keepdim=True).values
     log_sum_exp = m + torch.log(torch.sum(torch.exp(x_scaled - m), dim=dim, keepdim=True))
 
-    # log_softmax = inputs - log_sum_exp
+    # log_softmax(x) = x - log_sum_exp(x)
     log_probs = x_scaled - log_sum_exp
 
     if is_log:
@@ -194,6 +240,10 @@ def scaled_dot_prod_attn(Q, K, V, mask=None):
 
 
 class MultiheadSelfAttention(nn.Module):
+    """
+    Multi-Head Self-Attention (MHSA) layer with optional RoPE positional encoding.
+    """
+
     def __init__(self, d_model, num_heads, theta=None, max_seq_len=None, device=None):
         super().__init__()
 
@@ -202,43 +252,54 @@ class MultiheadSelfAttention(nn.Module):
         self.d_k = self.d_v = d_model // num_heads
         self.num_heads = num_heads
 
+        # Projections for Q, K, V and Output
         self.Wq = Linear(d_model, d_model, device=device)
         self.Wk = Linear(d_model, d_model, device=device)
         self.Wv = Linear(d_model, d_model, device=device)
         self.Wo = Linear(d_model, d_model, device=device)
 
+        # Optional Rotary Positional Embedding
+        self.rope = None
         if theta is not None and max_seq_len is not None:
             self.rope = RoPE(theta, self.d_k, max_seq_len, device)
 
-    def forward(self, x, token_positions=None):
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor = None) -> torch.Tensor:
+        # x: (B, T, d_model)
         Q = self.Wq(x)
         K = self.Wk(x)
         V = self.Wv(x)
 
-        # Split Q, K, V into heads
+        # Split Q, K, V into heads: (B, T, d_model) -> (B, num_heads, T, d_k)
         Q = rearrange(Q, "b t (h d) -> b h t d", h=self.num_heads)
         K = rearrange(K, "b t (h d) -> b h t d", h=self.num_heads)
         V = rearrange(V, "b t (h d) -> b h t d", h=self.num_heads)
 
         seq_len = x.shape[-2]
 
-        # Apply RoPE
+        # Apply RoPE if initialized
         if self.rope:
             # Rotate Q and K
             if token_positions is None:
-                token_positions = torch.arange(seq_len).unsqueeze(0)
+                token_positions = torch.arange(seq_len, device=x.device).unsqueeze(0)
 
             Q = self.rope(Q, token_positions)
             K = self.rope(K, token_positions)
 
+        # Compute Scaled Dot Product Attention with causal mask
         out = F.scaled_dot_product_attention(Q, K, V, is_causal=True)
 
-        # Concat heads
+        # Concatenate heads: (B, num_heads, T, d_k) -> (B, T, d_model)
         out = rearrange(out, "b h t d -> b t (h d)")
+        # Final linear projection
         return self.Wo(out)
 
 
 class TransformerBlock(nn.Module):
+    """
+    Single Transformer Block consisting of Pre-Norm, MHSA, and Pre-Norm, SwiGLU FFN.
+    Uses residual connections.
+    """
+
     def __init__(self, d_model, num_heads, d_ff, theta=None, max_seq_len=None, device=None):
         super().__init__()
 
@@ -247,15 +308,19 @@ class TransformerBlock(nn.Module):
         self.mhsa = MultiheadSelfAttention(d_model, num_heads, theta, max_seq_len, device)
         self.ffn = SwiGLU(d_model, d_ff, device=device)
 
-    def forward(self, x):
-        # Attention part of the block
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Pre-Norm + Self-Attention + Residual connection
         attn = x + self.mhsa(self.norm_att(x))
-        # Position-wise feed-forward part of the block
+        # Pre-Norm + Feed-Forward + Residual connection
         ffwd = attn + self.ffn(self.norm_ff(attn))
         return ffwd
 
 
 class TransformerLM(nn.Module):
+    """
+    Standard Decoder-Only Transformer Language Model.
+    """
+
     def __init__(
         self,
         vocab_size,
@@ -279,40 +344,61 @@ class TransformerLM(nn.Module):
         self.norm = RMSNorm(d_model, device=device)
         self.linear = Linear(d_model, vocab_size, device=device)
 
-    def forward(self, x, targets=None):
+    def forward(self, x: torch.Tensor, targets: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Input: x (token IDs) shape (B, T)
+        Targets: Optional ground truth token IDs for loss calculation.
+        Returns: (logits, loss)
+        """
+        # (B, T) -> (B, T, d_model)
         emb = self.emb(x)
-        # Pass embedding through transformer blocks
+
+        # Pass embedding through N transformer blocks
         for tblock in self.tblocks:
             emb = tblock(emb)
-        # Norm the transformer block output
+
+        # Final RMS Normalization
         normed = self.norm(emb)
-        # Pass through linear
+
+        # Pass through linear head to get logits: (B, T, d_model) -> (B, T, vocab_size)
         logits = self.linear(normed)
-        # Calculate loss
+
         loss = None
         if targets is not None:
+            # Calculate cross entropy loss if targets are provided
             loss = cross_entropy_loss(logits, targets)
+
         return logits, loss
 
 
-def cross_entropy_loss(inputs, targets):
+def cross_entropy_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    """
+    Standard Cross Entropy Loss using numerically stable Log-Softmax.
+    inputs: (B, T, C) - Logits
+    targets: (B, T) - Ground truth indices
+    """
     B, T, C = inputs.shape
 
-    # LogSumExp trick for numerical stability:
+    # Use stable log-probs: log_probs[b, t, c]
     log_probs = softmax(inputs, dim=-1, is_log=True)
 
-    # Pick out the log probs for the correct classes
+    # Gather the log-probabilities assigned to the target classes
     b = torch.arange(B, device=inputs.device).unsqueeze(1)
     t = torch.arange(T, device=inputs.device).unsqueeze(0)
 
     log_probs_correct = log_probs[b, t, targets]
 
-    # Mean negative log likelihood
+    # Negative Log Likelihood (NLL) Mean
     loss = -torch.mean(log_probs_correct)
     return loss
 
 
 class AdamW(torch.optim.Optimizer):
+    """
+    AdamW Optimizer (Adam with Decoupled Weight Decay).
+    Implements the standard Adam update but applies weight decay directly to the parameters.
+    """
+
     def __init__(self, params, lr, betas, eps, weight_decay):
         if lr < 0:
             raise ValueError(f"Invalid learning rate: {lr}")
@@ -320,6 +406,7 @@ class AdamW(torch.optim.Optimizer):
         super().__init__(params, defaults)
 
     def step(self, closure: Optional[Callable] = None):
+        """Standard optimization step."""
         loss = None
         if closure is not None:
             loss = closure()
@@ -336,7 +423,7 @@ class AdamW(torch.optim.Optimizer):
 
                 state = self.state[p]
 
-                # State initialization
+                # Initialize optimizer state (time t, momentum m, variance v)
                 if len(state) == 0:
                     state["t"] = 0
                     state["m"] = torch.zeros_like(p.data)
@@ -349,44 +436,60 @@ class AdamW(torch.optim.Optimizer):
                 m = state["m"]
                 v = state["v"]
 
-                # Update moments
+                # Update biased first moment estimate: m = beta1*m + (1-beta1)*grad
                 m = m * beta1 + (1 - beta1) * grad
+                # Update biased second raw moment estimate: v = beta2*v + (1-beta2)*grad^2
                 v = v * beta2 + (1 - beta2) * grad**2
 
                 state["m"] = m
                 state["v"] = v
 
-                # Bias correction
+                # Correct biases for m and v:
+                # alpha_t = lr * sqrt(1-beta2^t) / (1-beta1^t)
                 alpha_t = lr * math.sqrt(1 - beta2**t) / (1 - beta1**t)
 
-                # Update parameters
+                # Compute denominator (epsilon for numerical stability)
                 denom = v.sqrt() + eps
 
-                # Apply updates
+                # Apply Adam parameter update
                 p.data -= alpha_t * m / denom
-                # Apply weight decay
-                p.data -= lr * weight_decay * p.data
+
+                # Apply Weight Decay (Decoupled from the gradient update)
+                if weight_decay != 0:
+                    p.data -= lr * weight_decay * p.data
 
         return loss
 
 
 def learning_rate_schedule(t, a_max, a_min, T_w, T_c):
-    # Warmup
+    """
+    Cosine Learning Rate Schedule with Warmup.
+    t: current iteration
+    a_max: peak learning rate
+    a_min: final learning rate
+    T_w: warmup steps
+    T_c: total steps for annealing
+    """
+    # 1. Linear Warmup: Increase LR linearly from 0 to a_max
     if t < T_w:
         a_t = t / T_w * a_max
-    # Cosine annealing
+    # 2. Cosine Annealing: Decay LR from a_max down to a_min
     elif T_w <= t <= T_c:
         a_t = a_min + 1 / 2 * (1 + math.cos((t - T_w) / (T_c - T_w) * math.pi)) * (a_max - a_min)
-    # Post annealing
+    # 3. Post Annealing: Keep LR at a_min
     else:
         a_t = a_min
     return a_t
 
 
 def gradient_clipping(params, max_l2_norm):
+    """
+    Global Gradient Clipping to prevent exploding gradients.
+    Rescales gradients if their total L2 norm exceeds max_l2_norm.
+    """
     eps = 1e-6
 
-    # 1. compute total global norm
+    # 1. Compute total global L2 norm across all parameters
     total_sq = 0.0
     for p in params:
         if p.grad is not None:
@@ -394,14 +497,14 @@ def gradient_clipping(params, max_l2_norm):
 
     total_norm = torch.sqrt(total_sq)
 
-    # 2. if we're under threshold, we're done
+    # 2. If under threshold, no scaling needed
     if total_norm < max_l2_norm:
         return
 
-    # 3. compute scale factor
+    # 3. Compute scale factor (scale = threshold / current_norm)
     scale = max_l2_norm / (total_norm + eps)
 
-    # 4. apply scaling to every grad tensor
+    # 4. Apply scaling factor to every gradient tensor in-place
     for p in params:
         if p.grad is not None:
             p.grad.mul_(scale)
@@ -425,41 +528,53 @@ def save_checkpoint(
     out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
     rank,
 ):
+    """
+    Save a distributed checkpoint for an FSDP-wrapped model.
+    Only rank 0 performs the actual I/O, but all ranks participate in state-dict gathering.
+    """
 
-    # FSDP way of saving a checkpoint
+    # FSDP policy: Offload the full state dict to CPU to avoid OOM on the master rank
     save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
     with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
+        # get_state_dict retrieves the unsharded state from all ranks
         model_state_dict, optim_state_dict = get_state_dict(model, optimizer)
-        # cpu_state = model.state_dict()
+
     if rank == 0:
         print("Saving a checkpoint...")
-        # Join dicts into a single checkpoint dict
-        checkpoint = (
-            {"model_state": model_state_dict}
-            | {"optimizer_state": optim_state_dict}
-            | {"iteration_state": iteration}
-        )
-        # Save
+        # Package states into a single dictionary
+        checkpoint = {
+            "model_state": model_state_dict,
+            "optimizer_state": optim_state_dict,
+            "iteration_state": iteration,
+        }
+        # Save to disk
         torch.save(checkpoint, out)
         print("Saved a mid-training checkpoint!")
 
 
 def load_checkpoint(checkpoint_path, fsdp_model, optimizer, rank):
+    """
+    Load an FSDP-distributed checkpoint.
+    Broadcasts state from rank 0 to all other shards.
+    """
     load_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
 
     with FSDP.state_dict_type(fsdp_model, StateDictType.FULL_STATE_DICT, load_cfg):
         checkpoint = None
         if rank == 0:
+            # Rank 0 loads the file into memory
             checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
-        # Broadcast iteration to all ranks
-        iteration = torch.tensor(checkpoint["iteration_state"] if rank == 0 else 0).to(rank)
+        # Broadcast iteration counter to all ranks so they stay in sync
+        iteration_val = checkpoint["iteration_state"] if rank == 0 else 0
+        iteration = torch.tensor(iteration_val).to(rank)
         dist.broadcast(iteration, src=0)
 
-        # Load model and optimizer state using set_state_dict
+        # Retrieve state dicts (rank 0 has the data, others have None initially)
         model_state = checkpoint["model_state"] if rank == 0 else None
         optim_state = checkpoint["optimizer_state"] if rank == 0 else None
 
+        # set_state_dict handles the communication to load the full state into shards
         set_state_dict(
             fsdp_model,
             optimizer,
@@ -471,30 +586,39 @@ def load_checkpoint(checkpoint_path, fsdp_model, optimizer, rank):
 
 
 def generate(prompt, max_tokens, context_length, batch_size, model, temp, top_p, device):
+    """
+    Main generation loop for the LLM.
+    prompt: starting text
+    max_tokens: number of tokens to generate per sequence
+    context_length: maximum window size the model can handle
+    batch_size: number of sequences to generate
+    model: the transformer model
+    temp: softmax temperature
+    top_p: nucleus sampling threshold
+    """
     enc = tiktoken.get_encoding("gpt2")
     sentences = []
 
     for i in range(batch_size):
+        # Encode prompt and move to device
         inputs = torch.tensor(enc.encode(prompt), device=device).unsqueeze(0)
         for _ in range(max_tokens):
-            # Generate next token
+            # Generate next token logits using autocast for speed/memory efficiency
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                 logits, _ = model(inputs)
-            # Apply softmax with temperature
+            # Apply temperature and top-p sampling on the last token's logits
             probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
-            # Use top p sampling for next token
             next_token = top_p_sampling(probs, p=top_p)
-            # Concatenate the token to the inputs tensor
+            # Append token to sequence
             inputs = torch.cat((inputs, next_token), dim=1)
-            # If generated endoftext = end subsequent generation
+            # Stop if the end-of-text special token is generated
             if enc.decode([next_token.item()]) == "<|endoftext|>":
                 break
-            # If the input is larger than the context length,
-            # Use only the last context length amount of tokens
+            # Truncate sequence if it exceeds the model's maximum context length
             if inputs.shape[-1] > context_length:
                 inputs = inputs[:, -context_length:]
 
-        # Print output
+        # Record the final generated sequence
         sentences.append(
             f"\nGenerated sequence №{i + 1}:\n" + enc.decode(inputs[0].tolist()) + "\n"
         )
@@ -546,29 +670,38 @@ def top_p_sampling(probs, p=0.9):
 
 
 class DataLoader:
+    """
+    Efficient DataLoader that uses np.memmap to stream tokens directly from disk.
+    Avoids loading the entire dataset into RAM.
+    """
+
     def __init__(self, filename, B, T):
         self.B = B
         self.T = T
+        # Memory-map the binary file for efficient reading
         self.dataset = np.memmap(filename, dtype=np.uint16, mode="r")
         self.cur_shard_pos = 0
         self.n_tokens = len(self.dataset)
 
     def next_batch(self):
+        """Returns the next (Inputs, Targets) batch of tokens."""
         B, T = self.B, self.T
 
-        # Calculate the slice
+        # Slice the dataset. Targets are shifted by 1 relative to inputs.
         buf = self.dataset[self.cur_shard_pos : self.cur_shard_pos + B * T + 1]
 
-        # Convert to torch and move to GPU only now
+        # Convert to torch tensor (uint16 -> int64)
         buf_torch = torch.from_numpy(buf.astype(np.int64))
 
-        x = buf_torch[:-1].view(B, T)  # Inputs
+        # Inputs include everything except the last token
+        x = buf_torch[:-1].view(B, T)
+        # Targets include everything except the first token
         y = buf_torch[1:].view(B, T)
 
-        # Advance pointer
+        # Advance pointer for the next call
         self.cur_shard_pos += B * T
 
-        # Reset if we hit the end
+        # Loop back to the start if we reach the end of the dataset
         if self.cur_shard_pos + (B * T + 1) > self.n_tokens:
             self.cur_shard_pos = 0
 
