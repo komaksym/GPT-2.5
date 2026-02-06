@@ -71,7 +71,7 @@ class HellaSwagLoader:
         return inputs_padded, labels, completion_mask
 
 
-def compute_hellaswag(model, inputs, labels, completion_mask):
+def compute_hellaswag(model, inputs, labels, completion_mask, device):
     """
     inputs: (B_flat, T) where B_flat = num_examples * 4
     labels: (num_examples) containing indices [0, 3, 1, ...]
@@ -79,6 +79,10 @@ def compute_hellaswag(model, inputs, labels, completion_mask):
                      1 for Completion tokens
                      0 for Context tokens AND Padding tokens
     """
+    labels = labels.to(device)
+    inputs = inputs.to(device)
+    completion_mask = completion_mask.to(device)
+
     model.eval()
     with torch.no_grad():
         # 1. Forward Pass
@@ -88,19 +92,15 @@ def compute_hellaswag(model, inputs, labels, completion_mask):
         # logits: [A, B, C] -> Predicts [B, C, D]
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = inputs[..., 1:].contiguous()
-        shift_mask = completion_mask[..., 1:].contiguous()  # Align mask too!
+        shift_mask = completion_mask[..., 1:].contiguous()
 
         # 3. Calculate Log Probs
-        # Use Gather to pick the exact log-prob of the target token
         log_probs = softmax(shift_logits, dim=-1, is_log=True)
 
         # gather expects index to have same dim as input, so unsqueeze -1
         target_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
 
         # 4. Apply Masking (The Safe Way)
-        # We want to sum ONLY the completion tokens.
-        # We zero out the log-probs of Context and Padding.
-        # (Mathematically, adding 0.0 in log-space is "adding nothing to the sum")
         masked_log_probs = target_log_probs * shift_mask
 
         # 5. Sum and Normalize
@@ -108,7 +108,6 @@ def compute_hellaswag(model, inputs, labels, completion_mask):
         sum_log_probs = masked_log_probs.sum(dim=-1)
 
         # Count actual tokens in the completion to normalize
-        # Avoid division by zero with clamp
         num_completion_tokens = shift_mask.sum(dim=-1).clamp(min=1e-9)
 
         # Average Log Probability (Higher is better, closer to 0)

@@ -232,7 +232,8 @@ def training_together(
 
             # Run HellaSwag
             hs_inputs, hs_labels, completion_mask = hellaswag_loader.next_batch()
-            hs_score = compute_hellaswag(model, hs_inputs, hs_labels, completion_mask)
+            hs_score = compute_hellaswag(model, hs_inputs, hs_labels, completion_mask, device)
+
             if master_rank:
                 # Populate the wandb table
                 for seq in generated_seqs:
