@@ -22,7 +22,13 @@ class Linear(nn.Module):
     Weights are truncated to stay within 3 standard deviations.
     """
 
-    def __init__(self, in_features, out_features, device=None, dtype=None):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ):
         super().__init__()
         # Specify Xavier initialization: std = sqrt(2 / (fan_in + fan_out))
         mean, std = 0, np.sqrt(2 / (in_features + out_features))
@@ -46,7 +52,13 @@ class Embedding(nn.Module):
     Standard embedding layer initialized from a normal distribution.
     """
 
-    def __init__(self, num_embeddings, embedding_dim, device=None, dtype=None):
+    def __init__(
+        self,
+        num_embeddings: int,
+        embedding_dim: int,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ):
         super().__init__()
         # Specify mean for the param initialization
         mean, std = 0, 1
@@ -71,7 +83,13 @@ class RMSNorm(nn.Module):
     Standardized in Llama and other modern transformer architectures for stability.
     """
 
-    def __init__(self, d_model: int, eps: float = 1e-5, device=None, dtype=None):
+    def __init__(
+        self,
+        d_model: int,
+        eps: float = 1e-5,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ):
         super().__init__()
         self.d_model = d_model
         self.eps = eps
@@ -95,7 +113,7 @@ class RMSNorm(nn.Module):
         return rmsnorm.to(dtype=in_dtype)
 
 
-def SiLU(x):
+def SiLU(x: torch.Tensor) -> torch.Tensor:
     """SiLU activation function"""
 
     return x * torch.sigmoid(x)
@@ -107,7 +125,13 @@ class SwiGLU(nn.Module):
     Commonly used in the feed-forward network of modern transformers.
     """
 
-    def __init__(self, d_model: int, d_ff: int = None, device=None, dtype=None):
+    def __init__(
+        self,
+        d_model: int,
+        d_ff: Optional[int] = None,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ):
         super().__init__()
         # Init d_ff dimension (typically 8/3 * d_model in Llama)
         self.d_ff = (8 / 3) * d_model if not d_ff else d_ff
@@ -146,7 +170,13 @@ class RoPE(nn.Module):
     Ref: https://arxiv.org/abs/2104.09864
     """
 
-    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+    def __init__(
+        self,
+        theta: float,
+        d_k: int,
+        max_seq_len: int,
+        device: Optional[torch.device] = None,
+    ):
         super().__init__()
         if d_k % 2 != 0:
             raise ValueError("d_k must be even (pairs of dimensions).")
@@ -203,7 +233,9 @@ class RoPE(nn.Module):
         return x_rot
 
 
-def softmax(x, dim, is_log=False, temp=1):
+def softmax(
+    x: torch.Tensor, dim: int, is_log: bool = False, temp: float = 1.0
+) -> torch.Tensor:
     """
     Numerically stable Softmax or Log-Softmax implementation.
     Uses the LogSumExp trick to prevent overflow.
@@ -224,7 +256,9 @@ def softmax(x, dim, is_log=False, temp=1):
         return torch.exp(log_probs)
 
 
-def scaled_dot_prod_attn(Q, K, V, mask=None):
+def scaled_dot_prod_attn(
+    Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, mask: Optional[torch.Tensor] = None
+) -> torch.Tensor:
     d_k = Q.shape[-1]
 
     # Calculate pre softmax
@@ -244,7 +278,14 @@ class MultiheadSelfAttention(nn.Module):
     Multi-Head Self-Attention (MHSA) layer with optional RoPE positional encoding.
     """
 
-    def __init__(self, d_model, num_heads, theta=None, max_seq_len=None, device=None):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        theta: Optional[float] = None,
+        max_seq_len: Optional[int] = None,
+        device: Optional[torch.device] = None,
+    ):
         super().__init__()
 
         assert d_model % num_heads == 0, "num heads should be a power of 2"
@@ -300,7 +341,15 @@ class TransformerBlock(nn.Module):
     Uses residual connections.
     """
 
-    def __init__(self, d_model, num_heads, d_ff, theta=None, max_seq_len=None, device=None):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        theta: Optional[float] = None,
+        max_seq_len: Optional[int] = None,
+        device: Optional[torch.device] = None,
+    ) -> None:
         super().__init__()
 
         self.norm_att = RMSNorm(d_model, device=device)
@@ -323,15 +372,15 @@ class TransformerLM(nn.Module):
 
     def __init__(
         self,
-        vocab_size,
-        context_length,
-        num_layers,
-        d_model,
-        num_heads,
-        d_ff,
-        theta=None,
-        device=None,
-    ):
+        vocab_size: int,
+        context_length: int,
+        num_layers: int,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        theta: Optional[float] = None,
+        device: Optional[torch.device] = None,
+    ) -> None:
         super().__init__()
 
         self.device = device
@@ -399,7 +448,14 @@ class AdamW(torch.optim.Optimizer):
     Implements the standard Adam update but applies weight decay directly to the parameters.
     """
 
-    def __init__(self, params, lr, betas, eps, weight_decay):
+    def __init__(
+        self,
+        params: typing.Iterable[nn.Parameter],
+        lr: float,
+        betas: tuple[float, float],
+        eps: float,
+        weight_decay: float,
+    ) -> None:
         if lr < 0:
             raise ValueError(f"Invalid learning rate: {lr}")
         defaults = {"lr": lr, "betas": betas, "epsilon": eps, "weight_decay": weight_decay}
@@ -461,7 +517,9 @@ class AdamW(torch.optim.Optimizer):
         return loss
 
 
-def learning_rate_schedule(t, a_max, a_min, T_w, T_c):
+def learning_rate_schedule(
+    t: int, a_max: float, a_min: float, T_w: int, T_c: int
+) -> float:
     """
     Cosine Learning Rate Schedule with Warmup.
     t: current iteration
@@ -482,7 +540,9 @@ def learning_rate_schedule(t, a_max, a_min, T_w, T_c):
     return a_t
 
 
-def gradient_clipping(params, max_l2_norm):
+def gradient_clipping(
+    params: typing.Iterable[nn.Parameter], max_l2_norm: float
+) -> None:
     """
     Global Gradient Clipping to prevent exploding gradients.
     Rescales gradients if their total L2 norm exceeds max_l2_norm.
@@ -510,7 +570,7 @@ def gradient_clipping(params, max_l2_norm):
             p.grad.mul_(scale)
 
 
-def to_cpu(obj):
+def to_cpu(obj: typing.Any) -> typing.Any:
     if isinstance(obj, torch.Tensor):
         return obj.cpu()
     elif isinstance(obj, dict):
@@ -526,8 +586,8 @@ def save_checkpoint(
     optimizer: torch.optim.Optimizer,
     iteration: int,
     out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
-    rank,
-):
+    rank: int,
+) -> None:
     """
     Save a distributed checkpoint for an FSDP-wrapped model.
     Only rank 0 performs the actual I/O, but all ranks participate in state-dict gathering.
@@ -552,7 +612,12 @@ def save_checkpoint(
         print("Saved a mid-training checkpoint!")
 
 
-def load_checkpoint(checkpoint_path, fsdp_model, optimizer, rank):
+def load_checkpoint(
+    checkpoint_path: str | os.PathLike,
+    fsdp_model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    rank: int,
+) -> int:
     """
     Load an FSDP-distributed checkpoint.
     Broadcasts state from rank 0 to all other shards.
@@ -585,7 +650,16 @@ def load_checkpoint(checkpoint_path, fsdp_model, optimizer, rank):
     return iteration.item()
 
 
-def generate(prompt, max_tokens, context_length, batch_size, model, temp, top_p, device):
+def generate(
+    prompt: str,
+    max_tokens: int,
+    context_length: int,
+    batch_size: int,
+    model: nn.Module,
+    temp: float,
+    top_p: float,
+    device: torch.device,
+) -> list[str]:
     """
     Main generation loop for the LLM.
     prompt: starting text
@@ -625,7 +699,7 @@ def generate(prompt, max_tokens, context_length, batch_size, model, temp, top_p,
     return sentences
 
 
-def top_p_sampling(probs, p=0.9):
+def top_p_sampling(probs: torch.Tensor, p: float = 0.9) -> torch.Tensor:
     """
     probs: [Batch Size, Vocab Size] - The raw probabilities (already softmaxed)
     p: float - The cumulative probability threshold (e.g., 0.9)
@@ -675,7 +749,7 @@ class DataLoader:
     Avoids loading the entire dataset into RAM.
     """
 
-    def __init__(self, filename, B, T):
+    def __init__(self, filename: str | os.PathLike, B: int, T: int) -> None:
         self.B = B
         self.T = T
         # Memory-map the binary file for efficient reading
@@ -683,7 +757,7 @@ class DataLoader:
         self.cur_shard_pos = 0
         self.n_tokens = len(self.dataset)
 
-    def next_batch(self):
+    def next_batch(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Returns the next (Inputs, Targets) batch of tokens."""
         B, T = self.B, self.T
 
