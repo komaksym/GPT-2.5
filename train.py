@@ -8,14 +8,12 @@ import tiktoken
 import torch
 import torch.distributed as dist
 import tqdm
-import wandb
-from deepeval.benchmarks import HellaSwag
-from deepeval.benchmarks.tasks import HellaSwagTask
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 
-from hellaswag import MyGPT
+import wandb
+from hellaswag import HellaSwagLoader, compute_hellaswag
 from model.model import (
     AdamW,
     DataLoader,
@@ -159,10 +157,7 @@ def training_together(
         )
 
     # HellaSwag
-    my_model = MyGPT(model=model, tokenizer=tiktoken.get_encoding("gpt2"), device=device)
-    hellaswag_benchmark = HellaSwag(
-        tasks=[HellaSwagTask.TRIMMING_BRANCHES_OR_HEDGES, HellaSwagTask.BATON_TWIRLING]
-    )
+    hellaswag_loader = HellaSwagLoader(batch_size, context_length, tiktoken.get_encoding("gpt2"))
 
     # Warch model with wandb
     optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
@@ -236,7 +231,8 @@ def training_together(
             )
 
             # Run HellaSwag
-            hellaswag_benchmark.evaluate(my_model, batch_size=5)
+            hs_inputs, hs_labels, completion_mask = hellaswag_loader.next_batch()
+            hs_score = compute_hellaswag(model, hs_inputs, hs_labels, completion_mask)
             if master_rank:
                 # Populate the wandb table
                 for seq in generated_seqs:
@@ -245,10 +241,10 @@ def training_together(
                     print(seq)
 
                 # print to console
-                print(f"HellaSwag results: {hellaswag_benchmark.overall_score}")
+                print(f"HellaSwag results: {hs_score:.4f}")
 
                 # Log to wandb
-                run.log({"generated_sequences": master_table, "HellaSwag score": hellaswag_benchmark.overall_score})
+                run.log({"generated_sequences": master_table, "HellaSwag score": hs_score})
 
         # Save checkpoint
         if i >= 500 and i % 500 == 0:
