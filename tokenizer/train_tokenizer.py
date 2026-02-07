@@ -264,7 +264,8 @@ def train_bpe(
 
 
 def save_vocab_n_merges(
-    vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]]
+    vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]],
+    out_path_vocab, out_path_merges
 ) -> None:
     """
     Serializes the vocabulary and merges to JSON and text files respectively.
@@ -272,7 +273,7 @@ def save_vocab_n_merges(
     # Save everything except the first 255 bytes
     vocab = dict(islice(vocab.items(), 256, max(vocab)))
     # Save vocab as json file
-    with open("tinystories_vocab.json", "w") as outfile:
+    with open(out_path_vocab, "w") as outfile:
         json.dump(vocab, outfile)
     
     # Prepare merges in expected format
@@ -285,12 +286,16 @@ def save_vocab_n_merges(
         merges_new.append(pair + "\n")
 
     # Write merges to a file
-    with open("tinystories_merges.txt", "w") as outfile:
+    with open(out_path_merges, "w") as outfile:
         outfile.writelines(merges_new)
 
 
 if __name__ == "__main__":
-    vocab, merges = train_bpe("data/TinyStoriesV2-GPT4-valid.txt", 50257, 
-                              special_tokens = ["<|endoftext|>", "<start>", "<end>"])
+    input_path = "data/TinyStoriesV2-GPT4-valid.txt"
+    out_merges_path = "tinystories_merges.txt"
+    out_vocab_path = "tinystories_vocab.json"
+
+    vocab, merges = train_bpe(input_path, 50257, special_tokens = ["<|endoftext|>", "<start>", "<end>"], 
+                              out_vocab_path=out_vocab_path, out_merges_path=out_merges_path)
 
     save_vocab_n_merges(vocab, merges)
