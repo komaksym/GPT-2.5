@@ -12,7 +12,6 @@ import tiktoken
 import numpy as np
 import os
 from multiprocessing import Process, cpu_count
-import typing # Added import for typing.Any
 
 def process_shard(
     input_file: str | os.PathLike,

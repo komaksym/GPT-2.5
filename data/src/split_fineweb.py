@@ -3,7 +3,7 @@ Splits the large FineWeb text file into training and testing sets.
 """
 from tqdm import tqdm
 
-test_lines = 8222001
+test_lines = 8222001 # this is exactly 10% of the lines in the fineweb.txt
 in_file = "data/fineweb.txt"
 out_test = "data/fineweb_test.txt"
 out_train = "data/fineweb_train.txt"
