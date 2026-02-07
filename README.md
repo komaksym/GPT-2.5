@@ -1,114 +1,130 @@
-# GPT 2.5 - Modern and improved reproduction of GPT 2 124M
-This repository reproduces GPT 2 124M (completion model) with architectural changes to some components, which are used in all of the latest SOTA models. 
+# 🚀 GPT-2.5 — A Modern Reproduction of GPT-2 (124M)
 
-The reproduction started off with building and training a BPE tokenizer that was used originally in training GPT 2. 
+A **from-scratch implementation** of GPT-2 124M with modern architectural improvements found in state-of-the-art LLMs like LLaMA and Gemma.
 
-Then, was built the model starting from Linear layer all the way to the complete implementation of Transformer Decoder. (All of the components such as Linear, Embedding, softmax were written manually, for the sake of learning. Specifically, torch.nn, torch.nn.functional or torch.optim was not used except for the following):
-- torch.nn.Parameter
-- Container classes in torch.nn (e.g., Module, ModuleList, Sequential, etc.)
-- The torch.optim.Optimizer base class
-- torch.nn.functional.scaled_dot_product_attention (for the sake of using flash attention, custom scaled dot product attention was also implemented)
+[![Hugging Face](https://img.shields.io/badge/🤗%20Hugging%20Face-Dataset%20%26%20Checkpoints-blue)](https://huggingface.co/itskoma)
 
-The model was wrapped with a FSDP object to enable distributed training.
+---
 
-Lastly, we tokenized the datasets and implemented the training loop.
+## ✨ Highlights
 
-The model was then successfully trained, and experiment tracked, the results of which are provided below.
+*   **Built from the ground up**: Every component—`Linear`, `Embedding`, `Softmax`—was implemented manually. Only `torch.nn.Parameter`, container classes (`Module`, `Sequential`), and `torch.optim.Optimizer` base class were used.
+*   **Custom BPE Tokenizer**: Trained a Byte Pair Encoding tokenizer from scratch.
+*   **Distributed Training**: Wrapped with FSDP for efficient multi-GPU training.
+*   **Flash Attention**: Leverages `torch.nn.functional.scaled_dot_product_attention` for optimized attention.
 
-## Differences from the original GPT 2 (following most modern LLMs)
-- No bias term in Linears 
-- RMSNorm instead of LayerNorm
-- Pre-norm instead of post-norm
-- SwiGLU instead of GELU
-- RoPE instead of absolute positional embeddings
-- Flash attention instead of non-optimized attention
-- AdamW optimizer instead of Adam
-- Different weight initialization, truncation, no residual scaling
-- Different dataset, namely fineweb 10B
+---
 
-## Hyperparameters used
-- tokens processed per step: 524288
-- batch_size: 32
-- grad_accum_steps: 2
-- total_tokens_processed: ~42B
-- training_steps: 80000
-- context_length: 1024
-- num_layers: 12
-- num_heads: 12
-- d_model: 768
-- d_ff: 2048
-- max_lr: 18e-4
-- weight_decay: 0.1
-- optimizer_betas: 0.9, 0.95
-- eps: 1e-8
-- temp: 0.8
-- top_p: 0.9
+## 🔧 Modern Architectural Changes
 
-## Hardware used
-A cluster of 4x H100 SXM5 80GB
+This reproduction incorporates key improvements over the original GPT-2:
 
-## Results achieved
-- Train loss: ~3.2
-- Validation loss: ~3.12
-- Perplexity score: ~26.6
-- HellaSwag score: ~0.36
+| Feature             | Original GPT-2       | GPT-2.5 (This Repo)           |
+| :------------------ | :------------------- | :---------------------------- |
+| **Normalization**   | LayerNorm (Post)     | **RMSNorm (Pre)**             |
+| **Activation**      | GELU                 | **SwiGLU**                    |
+| **Positional Enc.** | Absolute             | **RoPE**                      |
+| **Attention**       | Standard             | **Flash Attention**           |
+| **Optimizer**       | Adam                 | **AdamW**                     |
+| **Bias in Linears** | Yes                  | **No**                        |
+| **Dataset**         | WebText              | **FineWeb 10B**               |
 
-<img src=results.png>
-Note: HellaSwag graph looks very erratic is due to the number of examples that was used per single evaluation (it was evaluated every 100 steps), specifically only the batch_size of examples were used to evaluate the performance on the HellaSwag and not the full validation dataset. But nevertheless, the fact that as the training goes, it is visible that the score keeps marking higher lowes and higher highs, which signals model quality improvement.
+---
 
-## Some generated samples (generation of 50 tokens or until hit EOS token)
-Starting prompt: "Once upon a time, "
+## ⚙️ Hyperparameters
 
-Samples:
-- Once upon a time, my brother-in-law and I would be all but broke and in debt. Let me say for the record, I was fully healthy in the summer of 2011 and we did just about everything we could to get a house together, start our
-- Once upon a time, we have a chance to see the transformation of technology. It will not be so easy, as it may take many years for it to fully be implemented. We need to know the best ways to use this technology.
-- Once upon a time, many people thought that “the young” might be better off staying with the big, fancy houses. But that is not true. Young people are not allowed to live in luxury, with their parents, or with their families.
-- Once upon a time, the fact that the Green Bay Packers used to be an underdog of the Super Bowl is a mystery, but it is now part of the legend of the Super Bowl.
-In 1986, the Green Bay Packers won the Super Bowl by beating the Seattle Seahawks
+| Parameter               | Value       |
+| :---------------------- | :---------- |
+| `batch_size`            | 32          |
+| `grad_accum_steps`      | 2           |
+| `tokens_per_step`       | 524,288     |
+| `total_tokens_processed`| ~42B        |
+| `training_steps`        | 80,000      |
+| `context_length`        | 1024        |
+| `num_layers`            | 12          |
+| `num_heads`             | 12          |
+| `d_model`               | 768         |
+| `d_ff`                  | 2048        |
+| `max_lr`                | 18e-4       |
+| `weight_decay`          | 0.1         |
+| `optimizer_betas`       | (0.9, 0.95) |
 
+---
 
-## How to run this
+## 🖥️ Hardware
 
-This section provides instructions on how to set up the environment, acquire data, and run the various components of the GPT-2.5 project. We use `uv` for dependency management.
+Trained on a cluster of **4x NVIDIA H100 SXM5 80GB** GPUs.
 
-### 1. Data Acquisition
+---
 
-You can download the dataset and pre-trained weights directly from the Hugging Face Hub. Note that the dataset download includes both raw text and tokenized binary files (`.bin`).
+## 📊 Results
 
-**Download Dataset (includes tokenized data):**
+| Metric               | Score  |
+| :------------------- | :----- |
+| **Train Loss**       | ~3.2   |
+| **Validation Loss**  | ~3.12  |
+| **Perplexity**       | ~26.6  |
+| **HellaSwag Acc.**   | ~0.36  |
+
+<img src="results.png" alt="Training Results Graph" width="800">
+
+> **Note**: The HellaSwag graph appears erratic because only a `batch_size` of examples were used per evaluation (every 100 steps), not the full validation set. However, the trend of higher lows and higher highs clearly indicates model quality improvement.
+
+---
+
+## 💬 Sample Generations
+
+**Prompt:** `"Once upon a time, "`
+
+> *"Once upon a time, my brother-in-law and I would be all but broke and in debt. Let me say for the record, I was fully healthy in the summer of 2011 and we did just about everything we could to get a house together, start our..."*
+
+> *"Once upon a time, we have a chance to see the transformation of technology. It will not be so easy, as it may take many years for it to fully be implemented. We need to know the best ways to use this technology."*
+
+> *"Once upon a time, many people thought that "the young" might be better off staying with the big, fancy houses. But that is not true. Young people are not allowed to live in luxury, with their parents, or with their families."*
+
+> *"Once upon a time, the fact that the Green Bay Packers used to be an underdog of the Super Bowl is a mystery, but it is now part of the legend of the Super Bowl. In 1986, the Green Bay Packers won the Super Bowl by beating the Seattle Seahawks..."*
+
+---
+
+## 🛠️ How to Run
+
+This project uses **`uv`** for dependency management.
+
+### 1. 📥 Data Acquisition
+
+Download the dataset (includes tokenized `.bin` files) and pre-trained checkpoints from Hugging Face:
+
 ```bash
+# Download Dataset
 uv run hf download itskoma/GPT2.5 --repo-type dataset --local-dir .
-```
 
-**Download Pre-trained Checkpoints:**
-```bash
+# Download Checkpoints
 uv run hf download itskoma/GPT2.5 --repo-type model --local-dir .
 ```
 
-### 2. Tokenizer Training
+### 2. 🔤 Tokenizer Training (Optional)
 
-If you wish to train the BPE tokenizer from scratch on your own data:
+To train the BPE tokenizer on your own data:
 
-1. Prepare a raw text file (e.g., `data/fineweb.txt`).
-2. Run the training script:
-   ```bash
-   uv run python tokenizer/train_tokenizer.py
-   ```
-   *Note: Modify the `input_path` and output paths in `tokenizer/train_tokenizer.py` as needed.*
+1.  Prepare a raw text file (e.g., `data/fineweb.txt`).
+2.  Run the script:
+    ```bash
+    uv run python tokenizer/train_tokenizer.py
+    ```
+    > *Modify `input_path` and output paths in the script as needed.*
 
-### 3. Dataset Tokenization (Optional)
+### 3. 📄 Dataset Tokenization (Optional)
 
-If you have downloaded the dataset using the command in Step 1, you already have the tokenized `.bin` files. However, if you have new raw text data, you can tokenize it using:
+If you downloaded the dataset in Step 1, you already have the tokenized files. For new data:
 
 ```bash
 uv run python data/src/tokenize_dataset.py
 ```
-*Note: This script uses multiprocessing to speed up tokenization. Adjust `input_path` and `final_output` in the script.*
+> *Adjust `input_path` and `final_output` in the script.*
 
-### 4. Training the Model
+### 4. 🏋️ Training the Model
 
-#### Training from Scratch
-To start training GPT 2.5 from scratch using distributed training:
+#### ▶️ Training from Scratch
 
 ```bash
 uv run torchrun --nproc_per_node 4 train.py \
@@ -128,13 +144,18 @@ uv run torchrun --nproc_per_node 4 train.py \
     --weight_decay 0.1
 ```
 
-#### Resuming/Loading from Checkpoint
-To resume training or load a specific checkpoint from the Hugging Face Hub (or your own local checkpoint):
+#### ⏸️ Resuming from Checkpoint
 
 ```bash
 uv run torchrun --nproc_per_node 4 train.py \
     --checkpoint checkpoints/final_checkpoint.pt \
     --batch_size 32 \
-    ... (other hyperparameters)
+    # ... (other hyperparameters)
 ```
-*(Ensure all hyperparameters match the original training run for consistency.)*
+> *Ensure hyperparameters match the original training run.*
+
+---
+
+## 📜 License
+
+This project is open-source. Feel free to use, modify, and distribute.
