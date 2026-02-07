@@ -2,9 +2,9 @@ import torch
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
 
-from typing import Any, Optional
+from typing import Any 
 import torch.nn as nn
-from model.model import softmax
+from model import softmax
 
 
 class HellaSwagLoader:

@@ -16,7 +16,7 @@ import torch.nn as nn
 
 import wandb
 from hellaswag import HellaSwagLoader, compute_hellaswag
-from model.model import (
+from model import (
     AdamW,
     DataLoader,
     TransformerBlock,
@@ -136,6 +136,7 @@ def training_together(
     model = TransformerLM(
         VOCAB_SIZE, context_length, num_layers, d_model, num_heads, d_ff, theta, device=device
     )
+    breakpoint()
 
     # Torch compile the model
     model.compile()
