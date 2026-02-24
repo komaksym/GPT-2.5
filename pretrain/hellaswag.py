@@ -4,7 +4,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from typing import Any 
 import torch.nn as nn
-from model import softmax
+from .model import softmax
 
 
 class HellaSwagLoader:
