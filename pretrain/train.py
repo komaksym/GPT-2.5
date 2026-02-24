@@ -15,8 +15,8 @@ from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 import torch.nn as nn
 
 import wandb
-from hellaswag import HellaSwagLoader, compute_hellaswag
-from model import (
+from .hellaswag import HellaSwagLoader, compute_hellaswag
+from .model import (
     AdamW,
     DataLoader,
     TransformerBlock,
@@ -26,6 +26,7 @@ from model import (
     learning_rate_schedule,
     load_checkpoint,
     save_checkpoint,
+    is_distributed
 )
 
 warnings.filterwarnings("ignore")
@@ -40,11 +41,6 @@ VAL_SET_DATA_CREATION_BATCH_SIZE = 100000
 torch.manual_seed(42)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(42)
-
-
-def is_distributed() -> bool:
-    """Checks if the script is running in a distributed environment (e.g., via torchrun)."""
-    return "RANK" in os.environ and "WORLD_SIZE" in os.environ
 
 
 def setup() -> None:

@@ -16,6 +16,11 @@ from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 
+def is_distributed() -> bool:
+    """Checks if the script is running in a distributed environment (e.g., via torchrun)."""
+    return "RANK" in os.environ and "WORLD_SIZE" in os.environ
+
+
 class Linear(nn.Module):
     """
     Standard linear layer with Xavier initialization, but without bias (standard for some LLM architectures).
@@ -614,7 +619,7 @@ def save_checkpoint(
 
 def load_checkpoint(
     checkpoint_path: str | os.PathLike,
-    fsdp_model: nn.Module,
+    model: nn.Module,
     optimizer: torch.optim.Optimizer,
     rank: int,
 ) -> int:
@@ -622,30 +627,37 @@ def load_checkpoint(
     Load an FSDP-distributed checkpoint.
     Broadcasts state from rank 0 to all other shards.
     """
-    load_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    if is_distributed():
+        load_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
 
-    with FSDP.state_dict_type(fsdp_model, StateDictType.FULL_STATE_DICT, load_cfg):
-        checkpoint = None
-        if rank == 0:
-            # Rank 0 loads the file into memory
-            checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, load_cfg):
+            checkpoint = None
+            if rank == 0:
+                # Rank 0 loads the file into memory
+                checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
-        # Broadcast iteration counter to all ranks so they stay in sync
-        iteration_val = checkpoint["iteration_state"] if rank == 0 else 0
-        iteration = torch.tensor(iteration_val).to(rank)
-        dist.broadcast(iteration, src=0)
+            # Broadcast iteration counter to all ranks so they stay in sync
+            iteration_val = checkpoint["iteration_state"] if rank == 0 else 0
+            iteration = torch.tensor(iteration_val).to(rank)
+            dist.broadcast(iteration, src=0)
 
-        # Retrieve state dicts (rank 0 has the data, others have None initially)
-        model_state = checkpoint["model_state"] if rank == 0 else None
-        optim_state = checkpoint["optimizer_state"] if rank == 0 else None
+            # Retrieve state dicts (rank 0 has the data, others have None initially)
+            model_state = checkpoint["model_state"] if rank == 0 else None
+            optim_state = checkpoint["optimizer_state"] if rank == 0 else None
 
-        # set_state_dict handles the communication to load the full state into shards
-        set_state_dict(
-            fsdp_model,
-            optimizer,
-            model_state_dict=model_state,
-            optim_state_dict=optim_state,
-        )
+            # set_state_dict handles the communication to load the full state into shards
+            set_state_dict(
+                model,
+                optimizer,
+                model_state_dict=model_state,
+                optim_state_dict=optim_state,
+            )
+    else:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+        iteration = torch.tensor(checkpoint["iteration_state"])
+        model.load_state_dict(checkpoint["model_state"])
+        optimizer.load_state_dict(checkpoint["optimizer_state"])
 
     return iteration.item()
 
