@@ -96,10 +96,10 @@ Download the dataset (includes tokenized `.bin` files) and pre-trained checkpoin
 
 ```bash
 # Download Dataset
-uv run hf download itskoma/GPT2.5 --repo-type dataset --local-dir .
+uv run hf download itskoma/GPT2.5 --repo-type dataset --local-dir datasets
 
 # Download Checkpoints
-uv run hf download itskoma/GPT2.5 --repo-type model --local-dir .
+uv run hf download itskoma/GPT2.5 --repo-type model --local-dir checkpoints
 ```
 
 ### 2. 🔤 Tokenizer Training (Optional)
