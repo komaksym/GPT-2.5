@@ -25,8 +25,8 @@ from .model import (
     generate,
     gradient_clipping,
     learning_rate_schedule,
-    load_checkpoint,
-    save_checkpoint,
+    fsdp_load_checkpoint,
+    fsdp_save_checkpoint,
     is_distributed
 )
 
@@ -190,7 +190,7 @@ def training_together(
     # Check if checkpoint exists
     if checkpoint and os.path.exists(checkpoint):
         # If it does, load it and keep training from the checkpoint
-        i = load_checkpoint(checkpoint, model, optimizer, rank)
+        i = fsdp_load_checkpoint(checkpoint, model, optimizer, rank)
         if master_rank:
             print(f"Continuing training from checkpoint at iteration {i}!")
     else:
@@ -276,7 +276,7 @@ def training_together(
                 # Create a folder
                 folder_name = temp_path.split("/")[0]
                 os.makedirs(folder_name, exist_ok=True)
-                save_checkpoint(model, optimizer, i, temp_path, rank)
+                fsdp_save_checkpoint(model, optimizer, i, temp_path)
                 # Update last checkpoint loss
                 last_checkpoint_loss = loss_accum
                 if master_rank:
@@ -293,7 +293,7 @@ def training_together(
                 folder_name = final_path.split("/")[0]
                 os.makedirs(folder_name, exist_ok=True)
                 # Create a final checkpoint
-                save_checkpoint(model, optimizer, i+1, final_path, rank)
+                fsdp_save_checkpoint(model, optimizer, i+1, final_path)
                 if master_rank:
                     print("Saved final checkpoint!")
         # Next training step
