@@ -13,10 +13,10 @@ import sys
 
 
 context_length = 1024
-num_layers = 12
-vocab_size = 50304
+num_layers = 2
+vocab_size = 50257
 d_model = 768
-num_heads = 12
+num_heads = 2
 d_ff = 2048
 theta = 10000
 betas = (0.9, 0.95)
@@ -27,38 +27,10 @@ a_max = 18e-4
 
 
 if __name__ == "__main__":
-    repo_id = "mikeawilliams/gpt2"
-
-    model_code_path = hf_hub_download(repo_id=repo_id, filename="model.py")
-
-    # Import the model module
-    spec = importlib.util.spec_from_file_location("model", model_code_path)
-    model_module = importlib.util.module_from_spec(spec)
-    sys.modules["model"] = model_module
-    spec.loader.exec_module(model_module)
-
-
-    checkpoint_path = hf_hub_download(repo_id=repo_id, filename="model_19072.pt")
-    state_dict = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
-
     model = TransformerLM(vocab_size, context_length, num_layers, 
                           d_model, num_heads, d_ff, 10000, device)
+ 
 
     # Load state dict
-    model.load_state_dict(state_dict["model"])
-
-    # Test
-    generated_sqs = generate(
-        "Once upon a time,",
-        max_tokens=50,
-        context_length=context_length,
-        batch_size=5,
-        model=model,
-        temp=0.8,
-        top_p=0.9,
-        device=device,
-    )
-
-    for seq in generated_sqs:
-        # Add to the wandb table
-        print(seq)
+    load_checkpoint("checkpoints/final_checkpoint", model)
+    breakpoint()
