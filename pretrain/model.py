@@ -597,16 +597,12 @@ class AppState(Stateful):
     def __init__(self, model, optimizer=None, iteration=None):
         self.model = model
         self.optimizer = optimizer
-        # Save FULL_STATE
-        self.state_dict_options = StateDictOptions(
-            full_state_dict=True,
-        )
         self.iteration = iteration
 
     def state_dict(self):
         # this line automatically manages FSDP FQN's, as well as sets the default state dict type to FSDP.SHARDED_STATE_DICT
         model_state_dict, optimizer_state_dict = get_state_dict(
-            self.model, self.optimizer, self.state_dict_options
+            self.model, self.optimizer
         )
         return {"model": model_state_dict, "optimizer": optimizer_state_dict, "iteration": self.iteration}
 
@@ -618,7 +614,7 @@ class AppState(Stateful):
             model_state_dict=state_dict["model"],
             optim_state_dict=state_dict["optimizer"],
         )
-        return state_dict["iteration"]
+        self.iteration = state_dict["iteration"]
 
 
 def save_checkpoint(
@@ -633,9 +629,8 @@ def save_checkpoint(
     Only rank 0 performs the actual I/O, but all ranks participate in state-dict gathering.
     """
 
-    model = model.to(rank)
-    state_dict = {"app": AppState(model, optimizer, iteration)}
-    dcp.save(state_dict, out_path)
+    state = {"app": AppState(model, optimizer, iteration, )}
+    dcp.save(state, checkpoint_id=out_path)
 
 
 def load_checkpoint(
@@ -648,13 +643,13 @@ def load_checkpoint(
     Load an FSDP-distributed checkpoint.
     Broadcasts state from rank 0 to all other shards.
     """
-    model = model.to(rank)
-    state_dict = {"app": AppState(model, optimizer)}
-    it = dcp.load(
-        state_dict=state_dict,
+    app = AppState(model, optimizer)
+    state = {"app": app}
+    dcp.load(
+        state_dict=state,
         checkpoint_id=checkpoint_path
     )
-    return it
+    return int(app.iteration)
 
 
 def generate(
