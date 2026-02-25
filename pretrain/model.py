@@ -617,12 +617,11 @@ class AppState(Stateful):
         self.iteration = state_dict["iteration"]
 
 
-def save_checkpoint(
+def fsdp_save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     iteration: int,
     out_path: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
-    rank: int,
 ) -> None:
     """
     Save a distributed checkpoint for an FSDP-wrapped model.
@@ -633,16 +632,16 @@ def save_checkpoint(
     dcp.save(state, checkpoint_id=out_path)
 
 
-def load_checkpoint(
+def fsdp_load_checkpoint(
     checkpoint_path: str | os.PathLike,
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
-    rank: int,
 ) -> int:
     """
     Load an FSDP-distributed checkpoint.
     Broadcasts state from rank 0 to all other shards.
     """
+
     app = AppState(model, optimizer)
     state = {"app": app}
     dcp.load(
@@ -650,6 +649,26 @@ def load_checkpoint(
         checkpoint_id=checkpoint_path
     )
     return int(app.iteration)
+
+
+def load_checkpoint(
+    checkpoint_path: str | os.PathLike,
+    model: nn.Module,
+) -> int:
+    """
+    Load a distributed checkpoint into a non-distributed model (not FSDP).
+    """
+    state = {
+        "app": {
+            "model": model.state_dict(),
+        }
+    }
+
+    dcp.load(
+        state_dict=state,
+        checkpoint_id=checkpoint_path
+    )
+    model.load_state_dict(state["app"]["model"])
 
 
 def generate(
