@@ -32,8 +32,8 @@ from .model import (
 
 warnings.filterwarnings("ignore")
 
-temp_path = "checkpoints/mid_training_checkpoint.pt"
-final_path = "checkpoints/final_checkpoint.pt"
+temp_path = "checkpoints/mid_training_checkpoint"
+final_path = "checkpoints/final_checkpoint"
 
 VOCAB_SIZE = 50257
 TRAINING_SET_DATA_CREATION_BATCH_SIZE = 1000000
@@ -188,7 +188,7 @@ def training_together(
     end_event = torch.cuda.Event(enable_timing=True)
 
     # Check if checkpoint exists
-    if checkpoint is not None and os.path.exists(checkpoint):
+    if checkpoint and os.path.exists(checkpoint):
         # If it does, load it and keep training from the checkpoint
         i = load_checkpoint(checkpoint, model, optimizer, rank)
         if master_rank:
@@ -196,7 +196,8 @@ def training_together(
     else:
         if master_rank:
             print("Training from scratch!")
-        pbar = tqdm.tqdm(range(train_steps), colour="blue")
+
+    pbar = tqdm.tqdm(range(train_steps), colour="blue", initial=i)
 
     # Start training
     while i < train_steps:
@@ -287,11 +288,13 @@ def training_together(
             if loss_accum < last_checkpoint_loss:
                 # Delete the mid training checkpoint
                 if master_rank:
-                    # Create a folder
-                    folder_name = final_path.split("/")[0]
-                    os.makedirs(folder_name, exist_ok=True)
-                    # Create a final checkpoint
-                    save_checkpoint(model, optimizer, i, final_path, rank)
+                    print("Saving a checkpoint...")
+                # Create a folder
+                folder_name = final_path.split("/")[0]
+                os.makedirs(folder_name, exist_ok=True)
+                # Create a final checkpoint
+                save_checkpoint(model, optimizer, i+1, final_path, rank)
+                if master_rank:
                     print("Saved final checkpoint!")
         # Next training step
         i += 1
