@@ -127,7 +127,7 @@ uv run python data/src/tokenize_dataset.py
 #### ▶️ Training from Scratch
 
 ```bash
-uv run torchrun --nproc_per_node 4 train.py \
+uv run torchrun --nproc_per_node 4  -m pretrain.train \
     --batch_size 32 \
     --grad_accum_steps 2 \
     --context_length 1024 \
@@ -147,7 +147,7 @@ uv run torchrun --nproc_per_node 4 train.py \
 #### ⏸️ Resuming from Checkpoint
 
 ```bash
-uv run torchrun --nproc_per_node 4 train.py \
+uv run torchrun --nproc_per_node 4 -m pretrain.train \
     --checkpoint checkpoints/final_checkpoint.pt \
     --batch_size 32 \
     # ... (other hyperparameters)
