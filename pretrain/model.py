@@ -16,6 +16,7 @@ from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.checkpoint.state_dict import StateDictOptions
+import torch.distributed.checkpoint as dcp
 
 
 def is_distributed() -> bool:
@@ -240,9 +241,7 @@ class RoPE(nn.Module):
         return x_rot
 
 
-def softmax(
-    x: torch.Tensor, dim: int, is_log: bool = False, temp: float = 1.0
-) -> torch.Tensor:
+def softmax(x: torch.Tensor, dim: int, is_log: bool = False, temp: float = 1.0) -> torch.Tensor:
     """
     Numerically stable Softmax or Log-Softmax implementation.
     Uses the LogSumExp trick to prevent overflow.
@@ -400,7 +399,9 @@ class TransformerLM(nn.Module):
         self.norm = RMSNorm(d_model, device=device)
         self.linear = Linear(d_model, vocab_size, device=device)
 
-    def forward(self, x: torch.Tensor, targets: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(
+        self, x: torch.Tensor, targets: Optional[torch.Tensor] = None
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Input: x (token IDs) shape (B, T)
         Targets: Optional ground truth token IDs for loss calculation.
@@ -524,9 +525,7 @@ class AdamW(torch.optim.Optimizer):
         return loss
 
 
-def learning_rate_schedule(
-    t: int, a_max: float, a_min: float, T_w: int, T_c: int
-) -> float:
+def learning_rate_schedule(t: int, a_max: float, a_min: float, T_w: int, T_c: int) -> float:
     """
     Cosine Learning Rate Schedule with Warmup.
     t: current iteration
@@ -547,9 +546,7 @@ def learning_rate_schedule(
     return a_t
 
 
-def gradient_clipping(
-    params: typing.Iterable[nn.Parameter], max_l2_norm: float
-) -> None:
+def gradient_clipping(params: typing.Iterable[nn.Parameter], max_l2_norm: float) -> None:
     """
     Global Gradient Clipping to prevent exploding gradients.
     Rescales gradients if their total L2 norm exceeds max_l2_norm.
@@ -597,30 +594,38 @@ class AppState(Stateful):
     and optimizer.
     """
 
-    def __init__(self, model, optimizer=None):
+    def __init__(self, model, optimizer=None, iteration=None):
         self.model = model
         self.optimizer = optimizer
+        # Save FULL_STATE
+        self.state_dict_options = StateDictOptions(
+            full_state_dict=True,
+        )
+        self.iteration = iteration
 
     def state_dict(self):
         # this line automatically manages FSDP FQN's, as well as sets the default state dict type to FSDP.SHARDED_STATE_DICT
-        model_state_dict, optimizer_state_dict = get_state_dict(self.model, self.optimizer)
-        return {
-            "model": model_state_dict, 
-            "optimizer": optimizer_state_dict
-        }
+        model_state_dict, optimizer_state_dict = get_state_dict(
+            self.model, self.optimizer, self.state_dict_options
+        )
+        return {"model": model_state_dict, "optimizer": optimizer_state_dict, "iteration": self.iteration}
 
     def load_state_dict(self, state_dict):
         # sets our state dicts on the model and optimizer, now that we've loaded
-        set_state_dict(self.model, self.optimizer, 
-                       model_state_dict=state_dict["model"], 
-                       optim_state_dict=state_dict["optimizer"])
+        set_state_dict(
+            self.model,
+            self.optimizer,
+            model_state_dict=state_dict["model"],
+            optim_state_dict=state_dict["optimizer"],
+        )
+        return state_dict["iteration"]
 
 
 def save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     iteration: int,
-    out: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
+    out_path: str | os.PathLike | typing.BinaryIO | typing.IO[bytes],
     rank: int,
 ) -> None:
     """
@@ -628,23 +633,9 @@ def save_checkpoint(
     Only rank 0 performs the actual I/O, but all ranks participate in state-dict gathering.
     """
 
-    # FSDP policy: Offload the full state dict to CPU to avoid OOM on the master rank
-    save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
-        # get_state_dict retrieves the unsharded state from all ranks
-        model_state_dict, optim_state_dict = get_state_dict(model, optimizer)
-
-    if rank == 0:
-        print("Saving a checkpoint...")
-        # Package states into a single dictionary
-        checkpoint = {
-            "model_state": model_state_dict,
-            "optimizer_state": optim_state_dict,
-            "iteration_state": iteration,
-        }
-        # Save to disk
-        torch.save(checkpoint, out)
-        print("Saved a mid-training checkpoint!")
+    model = model.to(rank)
+    state_dict = {"app": AppState(model, optimizer, iteration)}
+    dcp.save(state_dict, out_path)
 
 
 def load_checkpoint(
@@ -657,39 +648,13 @@ def load_checkpoint(
     Load an FSDP-distributed checkpoint.
     Broadcasts state from rank 0 to all other shards.
     """
-    if is_distributed():
-        load_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-
-        with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, load_cfg):
-            checkpoint = None
-            if rank == 0:
-                # Rank 0 loads the file into memory
-                checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-
-            # Broadcast iteration counter to all ranks so they stay in sync
-            iteration_val = checkpoint["iteration_state"] if rank == 0 else 0
-            iteration = torch.tensor(iteration_val).to(rank)
-            dist.broadcast(iteration, src=0)
-
-            # Retrieve state dicts (rank 0 has the data, others have None initially)
-            model_state = checkpoint["model_state"] if rank == 0 else None
-            optim_state = checkpoint["optimizer_state"] if rank == 0 else None
-
-            # set_state_dict handles the communication to load the full state into shards
-            set_state_dict(
-                model,
-                optimizer,
-                model_state_dict=model_state,
-                optim_state_dict=optim_state,
-            )
-    else:
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-
-        iteration = torch.tensor(checkpoint["iteration_state"])
-        model.load_state_dict(checkpoint["model_state"])
-        optimizer.load_state_dict(checkpoint["optimizer_state"])
-
-    return iteration.item()
+    model = model.to(rank)
+    state_dict = {"app": AppState(model, optimizer)}
+    it = dcp.load(
+        state_dict=state_dict,
+        checkpoint_id=checkpoint_path
+    )
+    return it
 
 
 def generate(
