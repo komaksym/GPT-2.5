@@ -13,6 +13,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 import torch.nn as nn
+from huggingface_hub import hf_hub_download
 
 import wandb
 from .hellaswag import HellaSwagLoader, compute_hellaswag
@@ -132,7 +133,6 @@ def training_together(
     model = TransformerLM(
         VOCAB_SIZE, context_length, num_layers, d_model, num_heads, d_ff, theta, device=device
     )
-    breakpoint()
 
     # Torch compile the model
     model.compile()
@@ -355,8 +355,12 @@ def main() -> None:
             mp_policy = None
 
     # Load the data
-    train_set_loader = DataLoader("fineweb_train.bin", args.batch_size, args.context_length)
-    val_set_loader = DataLoader("fineweb_test.bin", args.batch_size, args.context_length)
+    train_data = hf_hub_download(repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_train.bin")
+    val_data = hf_hub_download(repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_test.bin")
+
+    # Create data loaders
+    train_set_loader = DataLoader(train_data, args.batch_size, args.context_length)
+    val_set_loader = DataLoader(val_data, args.batch_size, args.context_length)
 
     # Start training
     training_together(
