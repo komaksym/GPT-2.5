@@ -136,8 +136,8 @@ uv run torchrun --nproc_per_node 4  -m pretrain.train \
     --num_heads 12 \
     --d_ff 2048 \
     --theta 10000 \
-    --train_steps 80000 \
-    --lr 18e-4 \
+    --train_steps 20000 \
+    --lr 6e-4 \
     --beta1 0.9 \
     --beta2 0.95 \
     --eps 1e-8 \
