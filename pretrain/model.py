@@ -12,8 +12,8 @@ import torch.nn.functional as F
 from einops import rearrange, reduce
 from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
 from torch.distributed.checkpoint.stateful import Stateful
-from torch.distributed.checkpoint.state_dict import StateDictOptions
 import torch.distributed.checkpoint as dcp
+from dataclasses import dataclass
 
 
 def is_distributed() -> bool:
@@ -798,3 +798,19 @@ class DataLoader:
             self.cur_shard_pos = 0
 
         return x, y
+
+
+@dataclass
+class GPTConfig:
+    context_length = 1024
+    num_layers = 12
+    vocab_size = 50257
+    d_model = 768
+    num_heads = 12
+    d_ff = 2048
+    theta = 10000
+    betas = (0.9, 0.95)
+    eps = 1e-8
+    weight_decay = 0.1
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    a_max = 6e-4 
