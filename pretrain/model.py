@@ -7,14 +7,11 @@ from typing import Optional
 import numpy as np
 import tiktoken
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, reduce
 from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
-from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 from torch.distributed.checkpoint.stateful import Stateful
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.checkpoint.state_dict import StateDictOptions
 import torch.distributed.checkpoint as dcp
 
