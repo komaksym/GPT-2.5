@@ -27,7 +27,8 @@ from .model import (
     learning_rate_schedule,
     fsdp_load_checkpoint,
     fsdp_save_checkpoint,
-    is_distributed
+    is_distributed,
+    GPTConfig
 )
 
 warnings.filterwarnings("ignore")
@@ -35,7 +36,7 @@ warnings.filterwarnings("ignore")
 temp_path = "checkpoints/mid_training_checkpoint"
 final_path = "checkpoints/final_checkpoint"
 
-VOCAB_SIZE = 50257
+VOCAB_SIZE = GPTConfig.vocab_size
 TRAINING_SET_DATA_CREATION_BATCH_SIZE = 1000000
 VAL_SET_DATA_CREATION_BATCH_SIZE = 100000
 
@@ -93,8 +94,6 @@ def run_evaluation(
             context_length=context_length,
             batch_size=5,
             model=model,
-            temp=0.8,
-            top_p=0.9,
             device=device,
         )
 
