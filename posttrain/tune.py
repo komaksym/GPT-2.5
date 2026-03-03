@@ -84,7 +84,14 @@ if __name__ == "__main__":
     load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
 
     # Load the dataset for instruction tuning
-    dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned")
+    dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned", split="train")
+
+    # Perform stratified split
+    dataset = dataset.class_encode_column("category").train_test_split(
+        test_size=0.1,
+        stratify_by_column='category',
+        seed=42)
+
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     tokenizer.pad_token = tokenizer.eos_token
 
