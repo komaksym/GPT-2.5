@@ -43,9 +43,7 @@ def tokenize(examples, tokenizer):
         attention_mask = [1] * len(input_ids)
 
         if len(input_ids) > GPTConfig.context_length:
-            input_ids = input_ids[-GPTConfig.context_length:]
-            labels = labels[-GPTConfig.context_length:]
-            attention_mask = attention_mask[-GPTConfig.context_length:]
+            continue
 
         inputs.append(input_ids)
         targets.append(labels)
