@@ -1,39 +1,57 @@
 from pretrain.model import load_checkpoint, TransformerLM, GPTConfig
 from datasets import load_dataset
-from transformers import AutoTokenizer, GPT2Config
+from transformers import AutoTokenizer 
 from huggingface_hub import snapshot_download
 
 
-def tokenize(example, tokenizer):
-    if example.get("context"):
+def format_prompt(instruction, context):
+    instruction = instruction.strip()
+    context = context.strip() if context else ""
+
+    if context:
         prompt = (
             "Instruction:\n"
-            f"{example["instruction"]}\n"
+            f"{instruction}\n"
             "Context:\n"
-            f"{example["context"]}\n"
+            f"{context}\n"
             "Response:\n"
         )
     else:
         prompt = (
             "Instruction:\n"
-            f"{example["instruction"]}\n"
+            f"{instruction}\n"
             "Response:\n"
         )
-    target = example["response"]
+    return prompt
+    
 
-    # Tokenize
-    prompt_ids = tokenizer(prompt, add_special_tokens=False)
-    target_ids = tokenizer(target, add_special_tokens=False)
+def tokenize(examples, tokenizer):
+    inputs = []
+    targets = []
+    attention_masks = []
 
-    # Combine prompt + answer into a single prompt
-    full_prompt = prompt_ids + target_ids + tokenizer.eos
+    for instruction, context, response in zip(
+        examples["instruction"], examples["context"], examples["response"]
+    ):
+        prompt = format_prompt(instruction, context)
 
-    # Make sure it doesn't go over the context length  
-    if len(full_prompt) > GPT2Config.context_length:
-        full_prompt = full_prompt[GPT2Config.context_length:]
+        prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+        response_ids = tokenizer(response, add_special_tokens=False)["input_ids"]
 
-    return prompt_ids
-    #return {"prompts": [prompt_ids], "targets": [target_ids]}
+        input_ids = prompt_ids + response_ids + [tokenizer.eos_token_id]
+        labels = [-100] * len(prompt_ids) + response_ids + [tokenizer.eos_token_id]
+        attention_mask = [1] * len(input_ids)
+
+        if len(input_ids) > GPTConfig.context_length:
+            input_ids = input_ids[-GPTConfig.context_length:]
+            labels = labels[-GPTConfig.context_length:]
+            attention_mask = attention_mask[-GPTConfig.context_length:]
+
+        inputs.append(input_ids)
+        targets.append(labels)
+        attention_masks.append(attention_mask)
+
+    return {"inputs": inputs, "targets": targets, "attention_mask": attention_masks}
 
 
 if __name__ == "__main__":
@@ -51,5 +69,6 @@ if __name__ == "__main__":
     dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned")
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
-    dataset = dataset.map(tokenize, batched=True, fn_kwargs={"tokenizer": tokenizer})
+    dataset = dataset.map(tokenize, batched=True, fn_kwargs={"tokenizer": tokenizer},
+                          remove_columns = dataset['train'].column_names)
     breakpoint()
