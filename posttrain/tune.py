@@ -52,6 +52,26 @@ def tokenize(examples, tokenizer):
     return {"inputs": inputs, "targets": targets, "attention_mask": attention_masks}
 
 
+def pad_sample(sample, max_length, tokenizer):
+    pad_amount = max_length - len(sample['inputs'])
+    return {
+        "inputs": sample['inputs'] + [tokenizer.pad_token_id] * pad_amount,
+        "targets": sample['targets'] + [-100] * pad_amount,
+        "attention_mask": sample['attention_mask'] + [0] * pad_amount
+    }
+
+
+def pad_dataset(dataset, tokenizer):
+    for split in dataset:
+        max_length = max(len(sample) for sample in dataset[split]['inputs'])    
+
+        dataset[split] = dataset[split].map(
+            pad_sample,
+            fn_kwargs={"max_length": max_length, "tokenizer": tokenizer}
+        )
+    return dataset
+
+
 if __name__ == "__main__":
     base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
                                GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
@@ -66,7 +86,9 @@ if __name__ == "__main__":
     # Load the dataset for instruction tuning
     dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned")
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer.pad_token = tokenizer.eos_token
 
     dataset = dataset.map(tokenize, batched=True, fn_kwargs={"tokenizer": tokenizer},
                           remove_columns = dataset['train'].column_names)
-    breakpoint()
+    # Pad dataset
+    dataset = pad_dataset(dataset, tokenizer)
