@@ -1,8 +1,11 @@
 from pretrain.model import load_checkpoint, TransformerLM, GPTConfig
 from datasets import load_dataset
-from transformers import AutoTokenizer, AutoConfig, AutoModelForSeq2SeqLM, TrainingArguments, Trainer
+from transformers import AutoTokenizer, TrainingArguments, Trainer
+from transformers.modeling_outputs import CausalLMOutput
 from huggingface_hub import snapshot_download
 import evaluate
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 def format_prompt(instruction, context):
@@ -50,27 +53,47 @@ def tokenize(examples, tokenizer):
         targets.append(labels)
         attention_masks.append(attention_mask)
 
-    return {"inputs": inputs, "targets": targets, "attention_mask": attention_masks}
+    return {"input_ids": inputs, "labels": targets, "attention_mask": attention_masks}
 
 
 def pad_sample(sample, max_length, tokenizer):
-    pad_amount = max_length - len(sample['inputs'])
+    pad_amount = max_length - len(sample['input_ids'])
     return {
-        "inputs": sample['inputs'] + [tokenizer.pad_token_id] * pad_amount,
-        "targets": sample['targets'] + [-100] * pad_amount,
+        "input_ids": sample['input_ids'] + [tokenizer.pad_token_id] * pad_amount,
+        "labels": sample['labels'] + [-100] * pad_amount,
         "attention_mask": sample['attention_mask'] + [0] * pad_amount
     }
 
 
 def pad_dataset(dataset, tokenizer):
     for split in dataset:
-        max_length = max(len(sample) for sample in dataset[split]['inputs'])    
-
+        max_length = max(len(sample) for sample in dataset[split]['input_ids'])    
         dataset[split] = dataset[split].map(
             pad_sample,
             fn_kwargs={"max_length": max_length, "tokenizer": tokenizer}
         )
     return dataset
+
+
+class HFTransformerLM(nn.Module):
+    def __init__(self, base_model):
+        super().__init__()
+        self.base_model = base_model
+    
+    def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
+        logits, _ = self.base_model(input_ids, attention_mask=attention_mask)
+
+        loss = None
+        if labels is not None:
+            shift_logits = logits[:, :-1, :].contiguous()
+            shift_labels = labels[:, 1:].contiguous()
+
+            loss = F.cross_entropy(
+                shift_logits.view(-1, shift_logits.size(-1)),
+                shift_labels.view(-1),
+                ignore_index=-100
+            )
+        return CausalLMOutput(loss=loss, logits=logits)
 
 
 def compute_metrics(eval_pred):
@@ -104,6 +127,9 @@ if __name__ == "__main__":
     # Pad dataset
     dataset = pad_dataset(dataset, tokenizer)
 
+    # Model
+    model = HFTransformerLM(base_model)
+
     # Metric
     metric = evaluate.load("perplexity")
 
@@ -111,10 +137,11 @@ if __name__ == "__main__":
         output_dir = "checkpoints/posttraining_checkpoint/",
         eval_strategy="epoch",
         push_to_hub=True,
+        per_device_train_batch_size=1
     )
 
     trainer = Trainer(
-        model=base_model,
+        model=model,
         args=training_args,
         train_dataset=dataset["train"],
         eval_dataset=dataset["test"],
