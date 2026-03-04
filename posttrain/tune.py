@@ -5,6 +5,7 @@ from transformers.modeling_outputs import CausalLMOutput
 from huggingface_hub import snapshot_download
 import evaluate
 import torch.nn as nn
+import numpy as np
 import torch.nn.functional as F
 
 
@@ -97,8 +98,8 @@ class HFTransformerLM(nn.Module):
 
 
 def compute_metrics(eval_pred):
-    breakpoint()
-    pass
+    mean_loss = float(np.mean(eval_pred.losses))
+    return {"perplexity": np.exp(mean_loss)}
 
 
 if __name__ == "__main__":
@@ -127,6 +128,10 @@ if __name__ == "__main__":
     # Pad dataset
     dataset = pad_dataset(dataset, tokenizer)
 
+    # Slice for faster testing iteration
+    dataset["train"] = dataset["train"].select(range(10))
+    dataset["test"] = dataset["test"].select(range(10))
+
     # Model
     model = HFTransformerLM(base_model)
 
@@ -137,7 +142,8 @@ if __name__ == "__main__":
         output_dir = "checkpoints/posttraining_checkpoint/",
         eval_strategy="epoch",
         push_to_hub=True,
-        per_device_train_batch_size=1
+        per_device_train_batch_size=5,
+        include_for_metrics=["loss"]
     )
 
     trainer = Trainer(
