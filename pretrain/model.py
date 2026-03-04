@@ -219,15 +219,16 @@ class RoPE(nn.Module):
             )
 
         # Retrieve precomputed cos/sin for the specific positions
-        token_positions = token_positions.long().to(self.cos.device)
-        cos_pos = self.cos[token_positions].to(self.device)  # (..., seq_len, d_half)
-        sin_pos = self.sin[token_positions].to(self.device)  # (..., seq_len, d_half)
+        token_positions = token_positions.long().to(x.device)
+        cos_pos = self.cos[token_positions].to(x.device)  # (..., seq_len, d_half)
+        sin_pos = self.sin[token_positions].to(x.device)  # (..., seq_len, d_half)
 
         # Split x into even and odd indices for rotation
         x_even = x[..., 0::2]  # (..., seq_len, d_half)
         x_odd = x[..., 1::2]  # (..., seq_len, d_half)
 
         # Apply rotation matrix: [cos -sin; sin cos] * [even; odd]
+        breakpoint()
         x_rot_even = x_even * cos_pos - x_odd * sin_pos
         x_rot_odd = x_even * sin_pos + x_odd * cos_pos
 
@@ -293,7 +294,7 @@ class MultiheadSelfAttention(nn.Module):
 
         assert d_model % num_heads == 0, "num heads should be a power of 2"
 
-        self.d_k = self.d_v = d_model // num_heads
+        self.d_k = d_model // num_heads
         self.num_heads = num_heads
 
         # Projections for Q, K, V and Output
@@ -307,11 +308,15 @@ class MultiheadSelfAttention(nn.Module):
         if theta is not None and max_seq_len is not None:
             self.rope = RoPE(theta, self.d_k, max_seq_len, device)
 
-    def forward(self, x: torch.Tensor, token_positions: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor = None,
+                attention_mask=None) -> torch.Tensor:
         # x: (B, T, d_model)
         Q = self.Wq(x)
         K = self.Wk(x)
         V = self.Wv(x)
+
+        # Time dim
+        T = Q.shape[1]
 
         # Split Q, K, V into heads: (B, T, d_model) -> (B, num_heads, T, d_k)
         Q = rearrange(Q, "b t (h d) -> b h t d", h=self.num_heads)
@@ -329,8 +334,14 @@ class MultiheadSelfAttention(nn.Module):
             Q = self.rope(Q, token_positions)
             K = self.rope(K, token_positions)
 
-        # Compute Scaled Dot Product Attention with causal mask
-        out = F.scaled_dot_product_attention(Q, K, V, is_causal=True)
+        # Combining causal and attn masks
+        causal_mask = torch.ones(T, T, device=x.device, dtype=torch.bool).tril()
+        causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
+
+        key_padding_mask = attention_mask[:, None, None, :].bool()
+        combined_mask = causal_mask & key_padding_mask
+        # Compute Scaled Dot Product Attention with causal and padding (attention) mask
+        out = F.scaled_dot_product_attention(Q, K, V, attn_mask=combined_mask)
 
         # Concatenate heads: (B, num_heads, T, d_k) -> (B, T, d_model)
         out = rearrange(out, "b h t d -> b t (h d)")
@@ -360,9 +371,9 @@ class TransformerBlock(nn.Module):
         self.mhsa = MultiheadSelfAttention(d_model, num_heads, theta, max_seq_len, device)
         self.ffn = SwiGLU(d_model, d_ff, device=device)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, attention_mask=None) -> torch.Tensor:
         # Pre-Norm + Self-Attention + Residual connection
-        attn = x + self.mhsa(self.norm_att(x))
+        attn = x + self.mhsa(self.norm_att(x), attention_mask=attention_mask)
         # Pre-Norm + Feed-Forward + Residual connection
         ffwd = attn + self.ffn(self.norm_ff(attn))
         return ffwd
@@ -397,7 +408,8 @@ class TransformerLM(nn.Module):
         self.linear = Linear(d_model, vocab_size, device=device)
 
     def forward(
-        self, x: torch.Tensor, targets: Optional[torch.Tensor] = None
+        self, x: torch.Tensor, targets: Optional[torch.Tensor] = None,
+        attention_mask=None
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Input: x (token IDs) shape (B, T)
@@ -409,7 +421,7 @@ class TransformerLM(nn.Module):
 
         # Pass embedding through N transformer blocks
         for tblock in self.tblocks:
-            emb = tblock(emb)
+            emb = tblock(emb, attention_mask)
 
         # Final RMS Normalization
         normed = self.norm(emb)
