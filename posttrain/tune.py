@@ -1,7 +1,8 @@
 from pretrain.model import load_checkpoint, TransformerLM, GPTConfig
 from datasets import load_dataset
-from transformers import AutoTokenizer 
+from transformers import AutoTokenizer, AutoConfig, AutoModelForSeq2SeqLM, TrainingArguments, Trainer
 from huggingface_hub import snapshot_download
+import evaluate
 
 
 def format_prompt(instruction, context):
@@ -72,6 +73,11 @@ def pad_dataset(dataset, tokenizer):
     return dataset
 
 
+def compute_metrics(eval_pred):
+    breakpoint()
+    pass
+
+
 if __name__ == "__main__":
     base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
                                GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
@@ -82,10 +88,8 @@ if __name__ == "__main__":
                                    repo_type="model", local_dir="checkpoints")
     # Load state dict to the model
     load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
-
     # Load the dataset for instruction tuning
     dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned", split="train")
-
     # Perform stratified split
     dataset = dataset.class_encode_column("category").train_test_split(
         test_size=0.1,
@@ -99,3 +103,21 @@ if __name__ == "__main__":
                           remove_columns = dataset['train'].column_names)
     # Pad dataset
     dataset = pad_dataset(dataset, tokenizer)
+
+    # Metric
+    metric = evaluate.load("perplexity")
+
+    training_args = TrainingArguments(
+        output_dir = "checkpoints/posttraining_checkpoint/",
+        eval_strategy="epoch",
+        push_to_hub=True,
+    )
+
+    trainer = Trainer(
+        model=base_model,
+        args=training_args,
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["test"],
+        compute_metrics=compute_metrics,
+    )
+    trainer.train()
