@@ -228,7 +228,6 @@ class RoPE(nn.Module):
         x_odd = x[..., 1::2]  # (..., seq_len, d_half)
 
         # Apply rotation matrix: [cos -sin; sin cos] * [even; odd]
-        breakpoint()
         x_rot_even = x_even * cos_pos - x_odd * sin_pos
         x_rot_odd = x_even * sin_pos + x_odd * cos_pos
 
