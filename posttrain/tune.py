@@ -136,13 +136,13 @@ if __name__ == "__main__":
     dataset = pad_dataset(dataset, tokenizer)
 
     # Slice for faster testing iteration
-    #dataset["train"] = dataset["train"].select(range(10))
-    #dataset["test"] = dataset["test"].select(range(10))
+    #dataset["train"] = dataset["train"].select(range(100))
+    #dataset["test"] = dataset["test"].select(range(100))
 
     # Model
     config = GPT2Config()
     model = HFTransformerLM(base_model, config)
-    BATCH_SIZE = 5
+    BATCH_SIZE = 8
 
     training_args = TrainingArguments(
         output_dir = "checkpoints/posttraining/",
@@ -152,8 +152,7 @@ if __name__ == "__main__":
         report_to="wandb",
         per_device_train_batch_size=BATCH_SIZE,
         per_device_eval_batch_size=BATCH_SIZE,
-        project="gpt-2.5",
-        hub_model_id = "itskoma/GPT2.5"
+        prediction_loss_only=True,
     )
 
     trainer = Trainer(
@@ -165,12 +164,6 @@ if __name__ == "__main__":
     )
     trainer.train()
 
-    breakpoint()
-    seqs = generate(
-        prompt="The capital of France is ", 
-        max_tokens=50, context_length=GPTConfig.context_length,
-        batch_size=5, model=base_model, temp=0.9, top_p=0.8, 
-        device=base_model.device
-        )
+    seqs = generate(prompt="The capital of France is ", max_tokens=50, context_length=GPTConfig.context_length, batch_size=5, model=base_model, temp=0.9, top_p=0.8, device=base_model.device)
     for s in seqs:
         print(s)
