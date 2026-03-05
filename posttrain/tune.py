@@ -1,4 +1,4 @@
-from pretrain.model import load_checkpoint, TransformerLM, GPTConfig
+from pretrain.model import load_checkpoint, TransformerLM, GPTConfig, generate
 from datasets import load_dataset
 from transformers import AutoTokenizer, TrainingArguments, Trainer, GPT2Config
 from transformers.modeling_outputs import CausalLMOutput
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     metric = evaluate.load("perplexity")
 
     training_args = TrainingArguments(
-        output_dir = "checkpoints/posttraining_checkpoint/",
+        output_dir = "checkpoints/posttraining/",
         eval_strategy="epoch",
         include_for_metrics=["loss"],
         report_to="wandb",
@@ -164,3 +164,12 @@ if __name__ == "__main__":
     )
     trainer.train()
 
+    breakpoint()
+    seqs = generate(
+        prompt="The capital of France is ", 
+        max_tokens=50, context_length=GPT2Config.context_length,
+        batch_size=5, model=base_model, temp=0.9, top_p=0.8, 
+        device=base_model.device
+        )
+    for s in seqs:
+        print(s)
