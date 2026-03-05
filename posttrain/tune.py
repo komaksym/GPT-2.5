@@ -1,12 +1,13 @@
 from pretrain.model import load_checkpoint, TransformerLM, GPTConfig
 from datasets import load_dataset
-from transformers import AutoTokenizer, TrainingArguments, Trainer
+from transformers import AutoTokenizer, TrainingArguments, Trainer, GPT2Config
 from transformers.modeling_outputs import CausalLMOutput
 from huggingface_hub import snapshot_download
 import evaluate
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
+import wandb
 
 
 def format_prompt(instruction, context):
@@ -77,8 +78,11 @@ def pad_dataset(dataset, tokenizer):
 
 
 class HFTransformerLM(nn.Module):
-    def __init__(self, base_model):
+    config_class = GPT2Config
+
+    def __init__(self, base_model, config):
         super().__init__()
+        self.config = config
         self.base_model = base_model
     
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
@@ -103,6 +107,9 @@ def compute_metrics(eval_pred):
 
 
 if __name__ == "__main__":
+    # Track with wandb
+    wandb.init(project="gpt-2.5")
+
     base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
                                GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
                                GPTConfig.theta, GPTConfig.device)
@@ -129,11 +136,12 @@ if __name__ == "__main__":
     dataset = pad_dataset(dataset, tokenizer)
 
     # Slice for faster testing iteration
-    dataset["train"] = dataset["train"].select(range(10))
-    dataset["test"] = dataset["test"].select(range(10))
+    #dataset["train"] = dataset["train"].select(range(10))
+    #dataset["test"] = dataset["test"].select(range(10))
 
     # Model
-    model = HFTransformerLM(base_model)
+    config = GPT2Config()
+    model = HFTransformerLM(base_model, config)
 
     # Metric
     metric = evaluate.load("perplexity")
@@ -141,9 +149,10 @@ if __name__ == "__main__":
     training_args = TrainingArguments(
         output_dir = "checkpoints/posttraining_checkpoint/",
         eval_strategy="epoch",
-        push_to_hub=True,
-        per_device_train_batch_size=5,
-        include_for_metrics=["loss"]
+        include_for_metrics=["loss"],
+        report_to="wandb",
+        project="gpt-2.5",
+        hub_model_id = "itskoma/GPT2.5"
     )
 
     trainer = Trainer(
@@ -154,3 +163,4 @@ if __name__ == "__main__":
         compute_metrics=compute_metrics,
     )
     trainer.train()
+
