@@ -86,6 +86,7 @@ class HellaSwagLoader:
         return inputs_padded, labels, completion_mask
 
 
+@torch.inference_mode()
 def compute_hellaswag(
     model: nn.Module,
     inputs: torch.Tensor,
@@ -105,44 +106,43 @@ def compute_hellaswag(
     completion_mask = completion_mask.to(device)
 
     model.eval()
-    with torch.no_grad():
-        # 1. Forward Pass
-        logits, _ = model(inputs)
+    # 1. Forward Pass
+    logits, _ = model(inputs)
 
-        # 2. Align Logits (Predict Next Token)
-        # logits: [A, B, C] -> Predicts [B, C, D]
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = inputs[..., 1:].contiguous()
-        shift_mask = completion_mask[..., 1:].contiguous()
+    # 2. Align Logits (Predict Next Token)
+    # logits: [A, B, C] -> Predicts [B, C, D]
+    shift_logits = logits[..., :-1, :].contiguous()
+    shift_labels = inputs[..., 1:].contiguous()
+    shift_mask = completion_mask[..., 1:].contiguous()
 
-        # 3. Calculate Log Probs
-        log_probs = softmax(shift_logits, dim=-1, is_log=True)
+    # 3. Calculate Log Probs
+    log_probs = softmax(shift_logits, dim=-1, is_log=True)
 
-        # gather expects index to have same dim as input, so unsqueeze -1
-        target_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
+    # gather expects index to have same dim as input, so unsqueeze -1
+    target_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
 
-        # 4. Apply Masking (The Safe Way)
-        masked_log_probs = target_log_probs * shift_mask
+    # 4. Apply Masking (The Safe Way)
+    masked_log_probs = target_log_probs * shift_mask
 
-        # 5. Sum and Normalize
-        # sum(dim=-1) sums across the sequence length
-        sum_log_probs = masked_log_probs.sum(dim=-1)
+    # 5. Sum and Normalize
+    # sum(dim=-1) sums across the sequence length
+    sum_log_probs = masked_log_probs.sum(dim=-1)
 
-        # Count actual tokens in the completion to normalize
-        num_completion_tokens = shift_mask.sum(dim=-1).clamp(min=1e-9)
+    # Count actual tokens in the completion to normalize
+    num_completion_tokens = shift_mask.sum(dim=-1).clamp(min=1e-9)
 
-        # Average Log Probability (Higher is better, closer to 0)
-        scores = sum_log_probs / num_completion_tokens
+    # Average Log Probability (Higher is better, closer to 0)
+    scores = sum_log_probs / num_completion_tokens
 
-        # 6. Reshape and Compare
-        # We assume B_flat is num_examples * 4
-        num_examples = labels.size(0)
-        scores = scores.view(num_examples, -1)  # Reshape to [Batch, Options]
+    # 6. Reshape and Compare
+    # We assume B_flat is num_examples * 4
+    num_examples = labels.size(0)
+    scores = scores.view(num_examples, -1)  # Reshape to [Batch, Options]
 
-        predictions = torch.argmax(scores, dim=-1)  # Pick index of highest prob
+    predictions = torch.argmax(scores, dim=-1)  # Pick index of highest prob
 
-        # Calculate accuracy
-        acc = (predictions == labels).float().mean().item()
+    # Calculate accuracy
+    acc = (predictions == labels).float().mean().item()
 
-        model.train()
-        return acc
+    model.train()
+    return acc

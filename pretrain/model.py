@@ -679,6 +679,7 @@ def load_checkpoint(
     model.load_state_dict(state["app"]["model"])
 
 
+@torch.inference_mode()
 def generate(
     prompt: str,
     max_tokens: int,

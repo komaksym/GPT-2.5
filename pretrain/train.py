@@ -60,6 +60,7 @@ def cleanup() -> None:
     dist.destroy_process_group()
 
 
+@torch.inference_mode()
 def run_evaluation(
     dataset_loader: DataLoader,
     model: nn.Module,
@@ -76,26 +77,25 @@ def run_evaluation(
     model.eval()
     master_rank = True if rank == 0 else False
 
-    with torch.no_grad():
-        # Run validation
-        val_inputs, val_labels = dataset_loader.next_batch()
-        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-            _, val_loss = model(val_inputs, val_labels)
+    # Run validation
+    val_inputs, val_labels = dataset_loader.next_batch()
+    with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+        _, val_loss = model(val_inputs, val_labels)
 
-        if master_rank:
-            print(f"step {iteration + 1}, val loss: {val_loss.item()}")
-            # Log loss in wandb
-            run.log({"val_loss": val_loss.item()})
+    if master_rank:
+        print(f"step {iteration + 1}, val loss: {val_loss.item()}")
+        # Log loss in wandb
+        run.log({"val_loss": val_loss.item()})
 
-        # Run generation
-        generated_sqs = generate(
-            "Once upon a time,",
-            max_tokens=50,
-            context_length=context_length,
-            batch_size=5,
-            model=model,
-            device=device,
-        )
+    # Run generation
+    generated_sqs = generate(
+        "Once upon a time,",
+        max_tokens=50,
+        context_length=context_length,
+        batch_size=5,
+        model=model,
+        device=device,
+    )
 
     model.train()
     return generated_sqs
