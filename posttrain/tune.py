@@ -142,15 +142,16 @@ if __name__ == "__main__":
     # Model
     config = GPT2Config()
     model = HFTransformerLM(base_model, config)
-
-    # Metric
-    metric = evaluate.load("perplexity")
+    BATCH_SIZE = 5
 
     training_args = TrainingArguments(
         output_dir = "checkpoints/posttraining/",
         eval_strategy="epoch",
         include_for_metrics=["loss"],
+        logging_steps=100,
         report_to="wandb",
+        per_device_train_batch_size=BATCH_SIZE,
+        per_device_eval_batch_size=BATCH_SIZE,
         project="gpt-2.5",
         hub_model_id = "itskoma/GPT2.5"
     )
@@ -167,7 +168,7 @@ if __name__ == "__main__":
     breakpoint()
     seqs = generate(
         prompt="The capital of France is ", 
-        max_tokens=50, context_length=GPT2Config.context_length,
+        max_tokens=50, context_length=GPTConfig.context_length,
         batch_size=5, model=base_model, temp=0.9, top_p=0.8, 
         device=base_model.device
         )
