@@ -106,7 +106,7 @@ class MyConfig(PretrainedConfig):
 class HFTransformerLM(PreTrainedModel):
     config_class = MyConfig
 
-    def __init__(self, config):
+    def __init__(self, config, training_mode=False):
         super().__init__(config)
         self.model = TransformerLM(
             config.vocab_size,
@@ -118,6 +118,7 @@ class HFTransformerLM(PreTrainedModel):
             config.theta,
             config.device,
         )
+        self.training_mode = training_mode
         self.post_init()
     
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
@@ -133,82 +134,12 @@ class HFTransformerLM(PreTrainedModel):
                 shift_labels.view(-1),
                 ignore_index=-100
             )
-        return CausalLMOutput(loss=loss, logits=logits)
+        return CausalLMOutput(loss=loss) if self.training_mode else CausalLMOutput(loss=loss, logits=logits)
 
 
 def compute_metrics(eval_pred):
     mean_loss = float(np.mean(eval_pred.losses))
     return {"perplexity": np.exp(mean_loss)}
-
-
-def main():
-    # Track with wandb
-    wandb.init(project="gpt-2.5")
-
-    base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
-                               GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
-                               GPTConfig.theta, GPTConfig.device)
-
-    # Download pretraining checkpoint
-    snapshot_download("itskoma/GPT2.5", allow_patterns="pretraining_checkpoint/*", 
-                                   repo_type="model", local_dir="checkpoints")
-    # Load state dict to the model
-    load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
-    # Load the dataset for instruction tuning
-    dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned", split="train")
-    # Perform stratified split
-    dataset = dataset.class_encode_column("category").train_test_split(
-        test_size=0.1,
-        stratify_by_column='category',
-        seed=42)
-
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    tokenizer.pad_token = tokenizer.eos_token
-
-    dataset = dataset.map(tokenize, batched=True, fn_kwargs={"tokenizer": tokenizer},
-                          remove_columns = dataset['train'].column_names)
-    # Pad dataset
-    dataset = pad_dataset(dataset, tokenizer)
-
-    # Slice for faster testing iteration
-    #dataset["train"] = dataset["train"].select(range(10))
-    #dataset["test"] = dataset["test"].select(range(10))
-
-    # Model
-    config = MyConfig(
-        vocab_size=GPTConfig.vocab_size,
-        context_length=GPTConfig.context_length,
-        num_layers=GPTConfig.num_layers,
-        num_heads=GPTConfig.num_heads,
-        d_model=GPTConfig.d_model,
-        d_ff=GPTConfig.d_ff,
-        theta=GPTConfig.theta,
-        device=GPTConfig.device,
-    )
-    model = HFTransformerLM(config)
-    model.model.load_state_dict(base_model.state_dict())
-    BATCH_SIZE = 8
-
-    training_args = TrainingArguments(
-        output_dir = "checkpoints/posttraining/",
-        eval_strategy="epoch",
-        include_for_metrics=["loss"],
-        logging_steps=100,
-        report_to="wandb",
-        per_device_train_batch_size=BATCH_SIZE,
-        per_device_eval_batch_size=BATCH_SIZE,
-        prediction_loss_only=True,
-    )
-
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=dataset["train"],
-        eval_dataset=dataset["test"],
-        compute_metrics=compute_metrics,
-    )
-    trainer.train()
-    trainer.save_model("checkpoints/posttraining_checkpoint")
 
 
 @torch.inference_mode()
@@ -262,8 +193,95 @@ def generate(
     return sentences
 
 
+def main():
+    # Track with wandb
+    wandb.init(project="gpt-2.5")
+
+    base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
+                               GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
+                               GPTConfig.theta, GPTConfig.device)
+
+    # Download pretraining checkpoint
+    snapshot_download("itskoma/GPT2.5", allow_patterns="pretraining_checkpoint/*", 
+                                   repo_type="model", local_dir="checkpoints")
+    # Load state dict to the model
+    load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
+    # Load the dataset for instruction tuning
+    dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned", split="train")
+    # Perform stratified split
+    dataset = dataset.class_encode_column("category").train_test_split(
+        test_size=0.1,
+        stratify_by_column='category',
+        seed=42)
+
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer.pad_token = tokenizer.eos_token
+
+    dataset = dataset.map(tokenize, batched=True, fn_kwargs={"tokenizer": tokenizer},
+                          remove_columns = dataset['train'].column_names)
+    # Pad dataset
+    dataset = pad_dataset(dataset, tokenizer)
+
+    # Slice for faster testing iteration
+    #dataset["train"] = dataset["train"].select(range(100))
+    #dataset["test"] = dataset["test"].select(range(100))
+
+    # Model
+    config = MyConfig(
+        vocab_size=GPTConfig.vocab_size,
+        context_length=GPTConfig.context_length,
+        num_layers=GPTConfig.num_layers,
+        num_heads=GPTConfig.num_heads,
+        d_model=GPTConfig.d_model,
+        d_ff=GPTConfig.d_ff,
+        theta=GPTConfig.theta,
+        device=GPTConfig.device,
+    )
+    model = HFTransformerLM(config, training_mode=True)
+    model.model.load_state_dict(base_model.state_dict())
+    BATCH_SIZE = 4
+
+    training_args = TrainingArguments(
+        output_dir = "checkpoints/posttraining/",
+        eval_strategy="epoch",
+        include_for_metrics=["loss"],
+        report_to="wandb",
+        per_device_train_batch_size=BATCH_SIZE,
+        per_device_eval_batch_size=BATCH_SIZE,
+        num_train_epochs=5,
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["test"],
+        compute_metrics=compute_metrics,
+    )
+    trainer.train()
+    trainer.save_model("checkpoints/posttraining_checkpoint")
+
+
 def inference_test():
-    model = HFTransformerLM.from_pretrained("checkpoints/posttraining_checkpoint")
+    #model = HFTransformerLM.from_pretrained("checkpoints/posttraining_checkpoint")
+    base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
+                               GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
+                               GPTConfig.theta, GPTConfig.device)
+
+    # Load state dict to the model
+    load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
+    config = MyConfig(
+        vocab_size=GPTConfig.vocab_size,
+        context_length=GPTConfig.context_length,
+        num_layers=GPTConfig.num_layers,
+        num_heads=GPTConfig.num_heads,
+        d_model=GPTConfig.d_model,
+        d_ff=GPTConfig.d_ff,
+        theta=GPTConfig.theta,
+        device=GPTConfig.device,
+    )
+    model = HFTransformerLM(config)
+    model.model.load_state_dict(base_model.state_dict())
     model.eval()
 
     device = GPTConfig.device
@@ -278,5 +296,5 @@ def inference_test():
         print(s)
 
 if __name__ == "__main__":
-    #test()
+    #inference_test()
     main()
