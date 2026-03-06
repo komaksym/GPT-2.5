@@ -1,11 +1,12 @@
-from pretrain.model import load_checkpoint, TransformerLM, GPTConfig, generate
+from pretrain.model import load_checkpoint, TransformerLM, GPTConfig, top_p_sampling, softmax
+import tiktoken
 from datasets import load_dataset
-from transformers import AutoTokenizer, TrainingArguments, Trainer, GPT2Config
+from transformers import AutoTokenizer, TrainingArguments, Trainer, PreTrainedModel, PretrainedConfig
 from transformers.modeling_outputs import CausalLMOutput
 from huggingface_hub import snapshot_download
-import evaluate
-import torch.nn as nn
 import numpy as np
+import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import wandb
 
@@ -76,17 +77,51 @@ def pad_dataset(dataset, tokenizer):
         )
     return dataset
 
+class MyConfig(PretrainedConfig):
+    model_type = "gpt2.5"
 
-class HFTransformerLM(nn.Module):
-    config_class = GPT2Config
+    def __init__(
+        self,
+        vocab_size=GPTConfig.vocab_size,
+        context_length=GPTConfig.context_length,
+        num_layers=GPTConfig.num_layers,
+        num_heads=GPTConfig.num_heads,
+        d_model=GPTConfig.d_model,
+        d_ff=GPTConfig.d_ff,
+        theta=GPTConfig.theta,
+        device=str(GPTConfig.device),
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.vocab_size = int(vocab_size)
+        self.context_length = int(context_length)
+        self.num_layers = int(num_layers)
+        self.num_heads = int(num_heads)
+        self.d_model = int(d_model)
+        self.d_ff = int(d_ff)
+        self.theta = float(theta)
+        self.device = device if isinstance(device, str) else str(device)
 
-    def __init__(self, base_model, config):
-        super().__init__()
-        self.config = config
-        self.base_model = base_model
+
+class HFTransformerLM(PreTrainedModel):
+    config_class = MyConfig
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.model = TransformerLM(
+            config.vocab_size,
+            config.context_length,
+            config.num_layers,
+            config.d_model,
+            config.num_heads,
+            config.d_ff,
+            config.theta,
+            config.device,
+        )
+        self.post_init()
     
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
-        logits, _ = self.base_model(input_ids, attention_mask=attention_mask)
+        logits, _ = self.model(input_ids, attention_mask=attention_mask)
 
         loss = None
         if labels is not None:
@@ -106,7 +141,7 @@ def compute_metrics(eval_pred):
     return {"perplexity": np.exp(mean_loss)}
 
 
-if __name__ == "__main__":
+def main():
     # Track with wandb
     wandb.init(project="gpt-2.5")
 
@@ -115,7 +150,7 @@ if __name__ == "__main__":
                                GPTConfig.theta, GPTConfig.device)
 
     # Download pretraining checkpoint
-    checkpoint = snapshot_download("itskoma/GPT2.5", allow_patterns="pretraining_checkpoint/*", 
+    snapshot_download("itskoma/GPT2.5", allow_patterns="pretraining_checkpoint/*", 
                                    repo_type="model", local_dir="checkpoints")
     # Load state dict to the model
     load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
@@ -136,12 +171,22 @@ if __name__ == "__main__":
     dataset = pad_dataset(dataset, tokenizer)
 
     # Slice for faster testing iteration
-    #dataset["train"] = dataset["train"].select(range(100))
-    #dataset["test"] = dataset["test"].select(range(100))
+    #dataset["train"] = dataset["train"].select(range(10))
+    #dataset["test"] = dataset["test"].select(range(10))
 
     # Model
-    config = GPT2Config()
-    model = HFTransformerLM(base_model, config)
+    config = MyConfig(
+        vocab_size=GPTConfig.vocab_size,
+        context_length=GPTConfig.context_length,
+        num_layers=GPTConfig.num_layers,
+        num_heads=GPTConfig.num_heads,
+        d_model=GPTConfig.d_model,
+        d_ff=GPTConfig.d_ff,
+        theta=GPTConfig.theta,
+        device=GPTConfig.device,
+    )
+    model = HFTransformerLM(config)
+    model.model.load_state_dict(base_model.state_dict())
     BATCH_SIZE = 8
 
     training_args = TrainingArguments(
@@ -163,7 +208,75 @@ if __name__ == "__main__":
         compute_metrics=compute_metrics,
     )
     trainer.train()
+    trainer.save_model("checkpoints/posttraining_checkpoint")
 
-    seqs = generate(prompt="The capital of France is ", max_tokens=50, context_length=GPTConfig.context_length, batch_size=5, model=base_model, temp=0.9, top_p=0.8, device=base_model.device)
+
+@torch.inference_mode()
+def generate(
+    prompt: str,
+    max_tokens: int,
+    context_length: int,
+    batch_size: int,
+    model: nn.Module,
+    temp: float,
+    top_p: float,
+    device: torch.device,
+) -> list[str]:
+    """
+    Main generation loop for the LLM.
+    prompt: starting text
+    max_tokens: number of tokens to generate per sequence
+    context_length: maximum window size the model can handle
+    batch_size: number of sequences to generate
+    model: the transformer model
+    temp: softmax temperature
+    top_p: nucleus sampling threshold
+    """
+    enc = tiktoken.get_encoding("gpt2")
+    sentences = []
+
+    for i in range(batch_size):
+        # Encode prompt and move to device
+        inputs = torch.tensor(enc.encode(prompt), device=device).unsqueeze(0)
+        for _ in range(max_tokens):
+            # Generate next token logits using autocast for speed/memory efficiency
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                output = model(inputs)
+                logits = output.logits
+            # Apply temperature and top-p sampling on the last token's logits
+            probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
+            next_token = top_p_sampling(probs, p=top_p)
+            # Append token to sequence
+            inputs = torch.cat((inputs, next_token), dim=1)
+            # Stop if the end-of-text special token is generated
+            if enc.decode([next_token.item()]) == "<|endoftext|>":
+                break
+            # Truncate sequence if it exceeds the model's maximum context length
+            if inputs.shape[-1] > context_length:
+                inputs = inputs[:, -context_length:]
+
+        # Record the final generated sequence
+        sentences.append(
+            f"\nGenerated sequence №{i + 1}:\n" + enc.decode(inputs[0].tolist()) + "\n"
+        )
+    return sentences
+
+
+def inference_test():
+    model = HFTransformerLM.from_pretrained("checkpoints/posttraining_checkpoint")
+    model.eval()
+
+    device = GPTConfig.device
+    model.to(device)
+
+    seqs = generate(
+        prompt="The capital of France is ", max_tokens=50, 
+        context_length=GPTConfig.context_length, batch_size=5,
+          model=model, temp=0.9, top_p=0.8, device=model.device)
+
     for s in seqs:
         print(s)
+
+if __name__ == "__main__":
+    #test()
+    main()
