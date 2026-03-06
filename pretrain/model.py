@@ -337,8 +337,11 @@ class MultiheadSelfAttention(nn.Module):
         causal_mask = torch.ones(T, T, device=x.device, dtype=torch.bool).tril()
         causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
 
-        key_padding_mask = attention_mask[:, None, None, :].bool()
-        combined_mask = causal_mask & key_padding_mask
+        if attention_mask is not None:
+            key_padding_mask = attention_mask[:, None, None, :].bool()
+            combined_mask = causal_mask & key_padding_mask
+        else:
+            combined_mask = causal_mask
         # Compute Scaled Dot Product Attention with causal and padding (attention) mask
         out = F.scaled_dot_product_attention(Q, K, V, attn_mask=combined_mask)
 
@@ -824,5 +827,9 @@ class GPTConfig:
     betas = (0.9, 0.95)
     eps = 1e-8
     weight_decay = 0.1
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+    "cuda" if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available()
+    else "cpu"
+)
     a_max = 6e-4 
