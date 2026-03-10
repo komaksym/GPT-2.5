@@ -1,14 +1,18 @@
 from pretrain.model import load_checkpoint, TransformerLM, GPTConfig, top_p_sampling, softmax
 import tiktoken
 from datasets import load_dataset
-from transformers import AutoTokenizer, TrainingArguments, Trainer, PreTrainedModel, PretrainedConfig
+from transformers import AutoTokenizer, TrainingArguments, Trainer, \
+     PreTrainedModel, PretrainedConfig, DataCollatorWithPadding, PreTrainedTokenizerBase
 from transformers.modeling_outputs import CausalLMOutput
+from transformers.utils import PaddingStrategy
 from huggingface_hub import snapshot_download
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import wandb
+from dataclasses import dataclass
+from typing import Any
 
 
 def format_prompt(instruction, context):
@@ -141,76 +145,6 @@ def compute_metrics(eval_pred):
     return {"perplexity": np.exp(mean_loss)}
 
 
-def main():
-    # Track with wandb
-    wandb.init(project="gpt-2.5")
-
-    base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
-                               GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
-                               GPTConfig.theta, GPTConfig.device)
-
-    # Download pretraining checkpoint
-    snapshot_download("itskoma/GPT2.5", allow_patterns="pretraining_checkpoint/*", 
-                                   repo_type="model", local_dir="checkpoints")
-    # Load state dict to the model
-    load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
-    # Load the dataset for instruction tuning
-    dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned", split="train")
-    # Perform stratified split
-    dataset = dataset.class_encode_column("category").train_test_split(
-        test_size=0.1,
-        stratify_by_column='category',
-        seed=42)
-
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    tokenizer.pad_token = tokenizer.eos_token
-
-    dataset = dataset.map(tokenize, batched=True, fn_kwargs={"tokenizer": tokenizer},
-                          remove_columns = dataset['train'].column_names)
-    # Pad dataset
-    dataset = pad_dataset(dataset, tokenizer)
-
-    # Slice for faster testing iteration
-    #dataset["train"] = dataset["train"].select(range(10))
-    #dataset["test"] = dataset["test"].select(range(10))
-
-    # Model
-    config = MyConfig(
-        vocab_size=GPTConfig.vocab_size,
-        context_length=GPTConfig.context_length,
-        num_layers=GPTConfig.num_layers,
-        num_heads=GPTConfig.num_heads,
-        d_model=GPTConfig.d_model,
-        d_ff=GPTConfig.d_ff,
-        theta=GPTConfig.theta,
-        device=GPTConfig.device,
-    )
-    model = HFTransformerLM(config)
-    model.model.load_state_dict(base_model.state_dict())
-    BATCH_SIZE = 8
-
-    training_args = TrainingArguments(
-        output_dir = "checkpoints/posttraining/",
-        eval_strategy="epoch",
-        include_for_metrics=["loss"],
-        logging_steps=100,
-        report_to="wandb",
-        per_device_train_batch_size=BATCH_SIZE,
-        per_device_eval_batch_size=BATCH_SIZE,
-        prediction_loss_only=True,
-    )
-
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=dataset["train"],
-        eval_dataset=dataset["test"],
-        compute_metrics=compute_metrics,
-    )
-    trainer.train()
-    trainer.save_model("checkpoints/posttraining_checkpoint")
-
-
 @torch.inference_mode()
 def generate(
     prompt: str,
@@ -276,6 +210,108 @@ def inference_test():
 
     for s in seqs:
         print(s)
+
+
+@dataclass
+class CustomCollatorWithPadding(DataCollatorWithPadding):
+    tokenizer: PreTrainedTokenizerBase
+    padding: bool | str | PaddingStrategy = True
+    max_length: int | None = None
+    pad_to_multiple_of: int | None = None
+    return_tensors: str = "pt"
+
+    def pad_batch(self, batch):
+        max_length = max(len(sample["input_ids"]) for sample in batch)
+
+        for sample in batch:
+            pad_amount = max_length - len(sample["input_ids"])
+            sample["input_ids"] = sample["input_ids"] + [self.tokenizer.pad_token_id] * pad_amount
+            sample["labels"] = sample["labels"] + [-100] * pad_amount
+            sample["attention_mask"] = sample["attention_mask"] + [0] * pad_amount
+
+        return {
+            "input_ids": torch.tensor([sample["input_ids"] for sample in batch]),
+            "labels": torch.tensor([sample["labels"] for sample in batch]),
+            "attention_mask": torch.tensor([sample["attention_mask"] for sample in batch])
+        }
+
+    def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
+        # Pad input_ids
+        return self.pad_batch(features)
+
+
+def main():
+    # Track with wandb
+    wandb.init(project="gpt-2.5")
+
+    base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
+                               GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
+                               GPTConfig.theta, GPTConfig.device)
+
+    # Download pretraining checkpoint
+    snapshot_download("itskoma/GPT2.5", allow_patterns="pretraining_checkpoint/*", 
+                                   repo_type="model", local_dir="checkpoints")
+    # Load state dict to the model
+    load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
+    # Load the dataset for instruction tuning
+    dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned", split="train")
+    # Perform stratified split
+    dataset = dataset.class_encode_column("category").train_test_split(
+        test_size=0.1,
+        stratify_by_column='category',
+        seed=42)
+
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer.pad_token = tokenizer.eos_token
+
+    dataset = dataset.map(tokenize, batched=True, fn_kwargs={"tokenizer": tokenizer},
+                          remove_columns = dataset['train'].column_names)
+    # Pad dataset
+    #dataset = pad_dataset(dataset, tokenizer)
+    data_collator = CustomCollatorWithPadding(tokenizer)
+
+    # Slice for faster testing iteration
+    #dataset["train"] = dataset["train"].select(range(10))
+    #dataset["test"] = dataset["test"].select(range(10))
+
+    # Model
+    config = MyConfig(
+        vocab_size=GPTConfig.vocab_size,
+        context_length=GPTConfig.context_length,
+        num_layers=GPTConfig.num_layers,
+        num_heads=GPTConfig.num_heads,
+        d_model=GPTConfig.d_model,
+        d_ff=GPTConfig.d_ff,
+        theta=GPTConfig.theta,
+        device=GPTConfig.device,
+    )
+    model = HFTransformerLM(config)
+    model.model.load_state_dict(base_model.state_dict())
+    BATCH_SIZE = 1
+
+    training_args = TrainingArguments(
+        eval_strategy="epoch",
+        include_for_metrics=["loss"],
+        logging_steps=100,
+        report_to="wandb",
+        per_device_train_batch_size=BATCH_SIZE,
+        per_device_eval_batch_size=BATCH_SIZE,
+        prediction_loss_only=True,
+        num_train_epochs=3,
+        learning_rate=1e-5,
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["test"],
+        compute_metrics=compute_metrics,
+        data_collator=data_collator,
+    )
+    trainer.train()
+    trainer.save_model("checkpoints/posttraining_checkpoint")
+
 
 if __name__ == "__main__":
     #test()
