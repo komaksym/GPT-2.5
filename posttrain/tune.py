@@ -81,6 +81,7 @@ def pad_dataset(dataset, tokenizer):
         )
     return dataset
 
+
 class MyConfig(PretrainedConfig):
     model_type = "gpt2.5"
 
@@ -168,6 +169,7 @@ def generate(
     """
     enc = tiktoken.get_encoding("gpt2")
     sentences = []
+    model.eval()
 
     for i in range(batch_size):
         # Encode prompt and move to device
@@ -196,15 +198,29 @@ def generate(
     return sentences
 
 
-def inference_test():
-    model = HFTransformerLM.from_pretrained("checkpoints/posttraining_checkpoint")
-    model.eval()
+def inference_test(prompt=None, pretraining_checkpoint=True):
+    if pretraining_checkpoint:
+        base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
+                               GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
+                               GPTConfig.theta, GPTConfig.device)
+
+        # Download pretraining checkpoint
+        snapshot_download("itskoma/GPT2.5", allow_patterns="pretraining_checkpoint/*", 
+                                    repo_type="model", local_dir="checkpoints")
+        # Load state dict to the model
+        load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
+        
+        # Model
+        model = HFTransformerLM(MyConfig())
+        model.model.load_state_dict(base_model.state_dict())
+    else:
+        model = HFTransformerLM.from_pretrained("checkpoints/posttraining_checkpoint")
 
     device = GPTConfig.device
     model.to(device)
 
     seqs = generate(
-        prompt="The capital of France is ", max_tokens=50, 
+        prompt=prompt, max_tokens=50, 
         context_length=GPTConfig.context_length, batch_size=5,
           model=model, temp=0.9, top_p=0.8, device=model.device)
 
@@ -275,19 +291,10 @@ def main():
     #dataset["test"] = dataset["test"].select(range(10))
 
     # Model
-    config = MyConfig(
-        vocab_size=GPTConfig.vocab_size,
-        context_length=GPTConfig.context_length,
-        num_layers=GPTConfig.num_layers,
-        num_heads=GPTConfig.num_heads,
-        d_model=GPTConfig.d_model,
-        d_ff=GPTConfig.d_ff,
-        theta=GPTConfig.theta,
-        device=GPTConfig.device,
-    )
+    config = MyConfig()
     model = HFTransformerLM(config)
     model.model.load_state_dict(base_model.state_dict())
-    BATCH_SIZE = 1
+    BATCH_SIZE = 8
 
     training_args = TrainingArguments(
         eval_strategy="epoch",
@@ -299,6 +306,8 @@ def main():
         prediction_loss_only=True,
         num_train_epochs=3,
         learning_rate=1e-5,
+        #lr_scheduler_type="cosine",
+        #warmup_steps=0.05,
     )
 
     trainer = Trainer(
@@ -314,5 +323,6 @@ def main():
 
 
 if __name__ == "__main__":
-    #test()
+    #inference_test(prompt="The capital of Germany is ", pretraining_checkpoint=True)
     main()
+    #inference_test(prompt="2+2 is ", pretraining_checkpoint=False)
