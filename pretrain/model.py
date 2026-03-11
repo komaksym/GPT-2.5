@@ -409,6 +409,9 @@ class TransformerLM(nn.Module):
         self.norm = RMSNorm(d_model, device=device)
         self.linear = Linear(d_model, vocab_size, device=device)
 
+        # Tie output head to token embeddings
+        self.linear.weight = self.emb.weight
+
     def forward(
         self, x: torch.Tensor, targets: Optional[torch.Tensor] = None,
         attention_mask=None
