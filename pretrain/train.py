@@ -338,6 +338,7 @@ def main() -> None:
 
     if is_distributed():
         rank = int(os.environ["RANK"])
+        local_rank = int(os.environ["LOCAL_RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
 
         torch.cuda.set_device(rank)
