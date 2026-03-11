@@ -335,6 +335,8 @@ def main() -> None:
     local_rank, my_auto_wrap_policy, mp_policy = None, None, None
     if is_distributed():
         local_rank = int(os.environ["LOCAL_RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+
         torch.cuda.set_device(local_rank)
 
         my_auto_wrap_policy = functools.partial(
@@ -364,8 +366,10 @@ def main() -> None:
     val_data = hf_hub_download(repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_test.bin")
 
     # Create data loaders
-    train_set_loader = DataLoader(train_data, args.batch_size, args.context_length)
-    val_set_loader = DataLoader(val_data, args.batch_size, args.context_length)
+    train_set_loader = DataLoader(train_data, args.batch_size, args.context_length,
+                                  rank=local_rank, world_size=world_size) # MUST REQUIRE DISTRIBUTED TRAINING
+    val_set_loader = DataLoader(val_data, args.batch_size, args.context_length,
+                                rank=local_rank, world_size=world_size) # MUST REQUIRE DISTRIBUTED TRAINING
 
     # Start training
     training_together(
