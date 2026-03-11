@@ -82,15 +82,10 @@ def run_evaluation(
     with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
         _, val_loss = model(val_inputs, val_labels)
 
-    # Scale loss down over ranks
-    val_loss_for_log = torch.tensor(val_loss)
-    dist.all_reduce(val_loss_for_log, op=dist.ReduceOp.SUM)
-    val_loss_for_log /= dist.get_world_size()
-
     if master_rank:
-        print(f"step {iteration + 1}, val loss: {val_loss_for_log.item()}")
+        print(f"step {iteration + 1}, val loss: {val_loss.item()}")
         # Log loss in wandb
-        run.log({"val_loss": val_loss_for_log.item()})
+        run.log({"val_loss": val_loss.item()})
 
     # Run generation
     generated_sqs = generate(
@@ -237,21 +232,16 @@ def training_together(
         end_event.record()
         # Wait for the GPU to reach end_event
         torch.cuda.synchronize()
-        step_time_ms = start_event.elapsed_time(end_event, device=device)
+        step_time_ms = start_event.elapsed_time(end_event)
         tokens_per_sec = (batch_size * context_length) / (step_time_ms / 1000)
-        # Scale loss down over number of ranks
-        loss_for_log = torch.tensor(loss_accum)
-        dist.all_reduce(loss_for_log, op=dist.ReduceOp.SUM)
-        loss_for_log /= dist.get_world_size()
-        # Perplexity
-        perplexity = np.exp(loss_for_log)
+        perplexity = np.exp(loss_accum)
         # Coordinated logging
         if master_rank:
             print(
-                f"step {i + 1}, loss: {loss_for_log:.3f}, perp: {perplexity:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}"
+                f"step {i + 1}, loss: {loss_accum:.3f}, perp: {perplexity:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}"
             )
             # Log loss in wandb
-            run.log({"loss": loss_for_log, "perplexity": perplexity, "norm": norm, "lr": lr})
+            run.log({"loss": loss_accum, "perplexity": perplexity, "norm": norm, "lr": lr})
             # Increment pbar
             pbar.update(1)
 
@@ -348,7 +338,6 @@ def main() -> None:
 
     if is_distributed():
         rank = int(os.environ["RANK"])
-        local_rank = int(os.environ["LOCAL_RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
 
         torch.cuda.set_device(rank)
@@ -403,7 +392,7 @@ def main() -> None:
         args.eps,
         args.weight_decay,
         device,
-        local_rank,
+        rank,
         my_auto_wrap_policy,
         mp_policy,
         args.checkpoint,
