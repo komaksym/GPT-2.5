@@ -161,6 +161,9 @@ def training_together(
         config.training_sampled_with_replacement = (
             False if "train_set_loader" and "val_set_loader" in locals() else True
         )
+        config.num_gpus = dist.get_world_size()
+        config.total_tokens_processed = (config.batch_size * config.grad_accum_steps 
+                                       * config.context_length * config.num_gpus)
         run.watch(model)
         master_table = wandb.Table(columns=["step", "prediction"], log_mode="INCREMENTAL")
 
