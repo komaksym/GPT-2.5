@@ -398,8 +398,9 @@ def main() -> None:
         args.checkpoint,
     )
 
-    dist.barrier()
-    cleanup()
+    if is_distributed():
+        dist.barrier()
+        cleanup()
 
 
 if __name__ == "__main__":
