@@ -785,35 +785,40 @@ class DataLoader:
     Avoids loading the entire dataset into RAM.
     """
 
-    def __init__(self, filename: str | os.PathLike, B: int, T: int) -> None:
+    def __init__(self, filename: str | os.PathLike, B: int, T: int, rank=0, world_size=1) -> None:
         self.B = B
         self.T = T
+        self.rank = rank
+        self.world_size = world_size
         # Memory-map the binary file for efficient reading
         self.dataset = np.memmap(filename, dtype=np.uint16, mode="r")
-        self.cur_shard_pos = 0
         self.n_tokens = len(self.dataset)
+
+        self.span = B * T
+        self.local_pos = self.span * self.rank
 
     def next_batch(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Returns the next (Inputs, Targets) batch of tokens."""
-        B, T = self.B, self.T
+
+        if self.local_pos + self.span + 1 > self.n_tokens:
+            self.local_pos = self.span * self.rank
+
+        start_pos = self.local_pos 
+        end_pos = start_pos + self.span + 1
 
         # Slice the dataset. Targets are shifted by 1 relative to inputs.
-        buf = self.dataset[self.cur_shard_pos : self.cur_shard_pos + B * T + 1]
+        buf = self.dataset[start_pos:end_pos]
 
         # Convert to torch tensor (uint16 -> int64)
         buf_torch = torch.from_numpy(buf.astype(np.int64))
 
         # Inputs include everything except the last token
-        x = buf_torch[:-1].view(B, T)
+        x = buf_torch[:-1].view(self.B, self.T)
         # Targets include everything except the first token
-        y = buf_torch[1:].view(B, T)
+        y = buf_torch[1:].view(self.B, self.T)
 
         # Advance pointer for the next call
-        self.cur_shard_pos += B * T
-
-        # Loop back to the start if we reach the end of the dataset
-        if self.cur_shard_pos + (B * T + 1) > self.n_tokens:
-            self.cur_shard_pos = 0
+        self.local_pos += self.span * self.world_size
 
         return x, y
 
