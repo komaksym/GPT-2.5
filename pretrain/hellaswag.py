@@ -2,7 +2,7 @@ import torch
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
 
-from typing import Any 
+from typing import Any
 import torch.nn as nn
 from .model import softmax
 
@@ -23,34 +23,24 @@ class HellaSwagLoader:
         self.n_examples = int(self.dataset.num_rows)
         self.eos_token = int(self.tokenizer._special_tokens["<|endoftext|>"])
 
-    def next_batch(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Returns the next batch of padded inputs, ground truth labels, and completion masks.
-        Returns:
-            inputs_padded: (B * 4, T)
-            labels: (B,)
-            completion_mask: (B * 4, T)
-        """
-        # Pluck out the context batch from the dataset
-        context = self.dataset[self.cur_shard_pos : self.cur_shard_pos + self.B][
-            "ctx"
-        ]  # list (5, arbitrary)
-        endings = self.dataset[self.cur_shard_pos : self.cur_shard_pos + self.B][
-            "endings"
-        ]  # list (5, 4, arbitrary)
-        labels = self.dataset[self.cur_shard_pos : self.cur_shard_pos + self.B][
-            "label"
-        ]  # list (5, 1)
+    def _create_batch(
+        self, start_idx: int, end_idx: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch = self.dataset[start_idx:end_idx]
+        context = batch["ctx"]
+        endings = batch["endings"]
+        labels = batch["label"]
+        batch_size = len(context)
 
-        # Tokenizer the context and endings
-        context_ids = self.tokenizer.encode_batch(context)  # list (5, arbitrary)
-        endings_ids = [self.tokenizer.encode_batch(e) for e in endings]  # list (5, 4, arbitrary)
+        # Tokenize the context and endings
+        context_ids = self.tokenizer.encode_batch(context)
+        endings_ids = [self.tokenizer.encode_batch(example_endings) for example_endings in endings]
 
         # Populate contexts with endings
         all_inputs = []
         all_masks = []
 
-        for i in range(self.B):
+        for i in range(batch_size):
             for j in range(len(endings_ids[i])):
                 # Join and truncate
                 full_ids = context_ids[i] + endings_ids[i][j]
@@ -74,26 +64,43 @@ class HellaSwagLoader:
         completion_mask = pad_sequence(all_masks, batch_first=True, padding_value=0)
 
         # Convert labels from string to ints
-        labels = torch.tensor([int(label) for label in labels])
-
-        # Advance pointer
-        self.cur_shard_pos += self.B
-
-        # Reset if we hit the end
-        if self.cur_shard_pos + self.B > self.n_examples:
-            self.cur_shard_pos = 0
+        labels = torch.tensor([int(label) for label in labels], dtype=torch.long)
 
         return inputs_padded, labels, completion_mask
 
+    def next_batch(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Returns the next batch of padded inputs, ground truth labels, and completion masks.
+        Returns:
+            inputs_padded: (B * 4, T)
+            labels: (B,)
+            completion_mask: (B * 4, T)
+        """
+        if self.cur_shard_pos >= self.n_examples:
+            self.cur_shard_pos = 0
+
+        end_idx = min(self.cur_shard_pos + self.B, self.n_examples)
+        batch = self._create_batch(self.cur_shard_pos, end_idx)
+
+        # Advance pointer
+        self.cur_shard_pos = 0 if end_idx >= self.n_examples else end_idx
+
+        return batch
+
+    def iter_batches(self):
+        for start_idx in range(0, self.n_examples, self.B):
+            end_idx = min(start_idx + self.B, self.n_examples)
+            yield self._create_batch(start_idx, end_idx)
+
 
 @torch.inference_mode()
-def compute_hellaswag(
+def compute_hellaswag_stats(
     model: nn.Module,
     inputs: torch.Tensor,
     labels: torch.Tensor,
     completion_mask: torch.Tensor,
     device: torch.device,
-) -> float:
+) -> tuple[int, int]:
     """
     inputs: (B_flat, T) where B_flat = num_examples * 4
     labels: (num_examples) containing indices [0, 3, 1, ...]
@@ -105,7 +112,6 @@ def compute_hellaswag(
     inputs = inputs.to(device)
     completion_mask = completion_mask.to(device)
 
-    model.eval()
     # 1. Forward Pass
     logits, _ = model(inputs)
 
@@ -141,8 +147,41 @@ def compute_hellaswag(
 
     predictions = torch.argmax(scores, dim=-1)  # Pick index of highest prob
 
-    # Calculate accuracy
-    acc = (predictions == labels).float().mean().item()
+    correct = int((predictions == labels).sum().item())
+    total = int(labels.numel())
+    return correct, total
+
+
+@torch.inference_mode()
+def compute_hellaswag(
+    model: nn.Module,
+    inputs: torch.Tensor,
+    labels: torch.Tensor,
+    completion_mask: torch.Tensor,
+    device: torch.device,
+) -> float:
+    model.eval()
+    correct, total = compute_hellaswag_stats(model, inputs, labels, completion_mask, device)
+    model.train()
+    return correct / total if total else 0.0
+
+
+@torch.inference_mode()
+def evaluate_hellaswag(
+    model: nn.Module,
+    loader: HellaSwagLoader,
+    device: torch.device,
+) -> float:
+    model.eval()
+    total_correct = 0
+    total_examples = 0
+
+    for inputs, labels, completion_mask in loader.iter_batches():
+        correct, batch_examples = compute_hellaswag_stats(
+            model, inputs, labels, completion_mask, device
+        )
+        total_correct += correct
+        total_examples += batch_examples
 
     model.train()
-    return acc
+    return total_correct / total_examples if total_examples else 0.0

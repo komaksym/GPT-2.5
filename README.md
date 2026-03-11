@@ -68,7 +68,7 @@ Trained on a cluster of **4x NVIDIA H100 SXM5 80GB** GPUs.
 
 <img src="results.png" alt="Training Results Graph" width="800">
 
-> **Note**: The HellaSwag graph appears erratic because only a `batch_size` of examples were used per evaluation (every 100 steps), not the full validation set. However, the trend of higher lows and higher highs clearly indicates model quality improvement.
+> **Note**: HellaSwag evaluation now runs across the full validation split on each evaluation step, so the logged accuracy reflects the complete benchmark instead of a sampled mini-batch.
 
 ---
 

@@ -16,7 +16,7 @@ import torch.nn as nn
 from huggingface_hub import hf_hub_download
 
 import wandb
-from .hellaswag import HellaSwagLoader, compute_hellaswag
+from .hellaswag import HellaSwagLoader, evaluate_hellaswag
 from .model import (
     AdamW,
     DataLoader,
@@ -253,8 +253,7 @@ def training_together(
             )
 
             # Run HellaSwag
-            hs_inputs, hs_labels, completion_mask = hellaswag_loader.next_batch()
-            hs_score = compute_hellaswag(model, hs_inputs, hs_labels, completion_mask, device)
+            hs_score = evaluate_hellaswag(model, hellaswag_loader, device)
 
             if master_rank:
                 # Populate the wandb table
