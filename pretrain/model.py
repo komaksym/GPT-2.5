@@ -692,9 +692,9 @@ def generate(
     context_length: int,
     batch_size: int,
     model: nn.Module,
-    temp: float,
-    top_p: float,
-    device: torch.device,
+    temp: float = 0.9,
+    top_p: float = 0.8,
+    device: torch.device = None
 ) -> list[str]:
     """
     Main generation loop for the LLM.
