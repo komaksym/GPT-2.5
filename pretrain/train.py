@@ -332,15 +332,15 @@ def main() -> None:
     # FSDP
     setup()
 
-    local_rank = 0
+    rank = 0
     world_size = 1
     my_auto_wrap_policy, mp_policy = None, None
 
     if is_distributed():
-        local_rank = int(os.environ["LOCAL_RANK"])
+        rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
 
-        torch.cuda.set_device(local_rank)
+        torch.cuda.set_device(rank)
 
         my_auto_wrap_policy = functools.partial(
             transformer_auto_wrap_policy,
@@ -370,9 +370,9 @@ def main() -> None:
 
     # Create data loaders
     train_set_loader = DataLoader(train_data, args.batch_size, args.context_length,
-                                  rank=local_rank, world_size=world_size)
+                                  rank=rank, world_size=world_size)
     val_set_loader = DataLoader(val_data, args.batch_size, args.context_length,
-                                rank=local_rank, world_size=world_size) 
+                                rank=rank, world_size=world_size) 
 
     # Start training
     training_together(
