@@ -15,6 +15,8 @@ from torch.distributed.checkpoint.stateful import Stateful
 import torch.distributed.checkpoint as dcp
 from dataclasses import dataclass
 
+GPT_INIT_STD = 0.02
+
 
 def is_distributed() -> bool:
     """Checks if the script is running in a distributed environment (e.g., via torchrun)."""
@@ -35,14 +37,8 @@ class Linear(nn.Module):
         dtype: Optional[torch.dtype] = None,
     ):
         super().__init__()
-        # Specify Xavier initialization: std = sqrt(2 / (fan_in + fan_out))
-        mean, std = 0, np.sqrt(2 / (in_features + out_features))
-        # Init the params from the normal distribution with said mean and std
-        param = torch.normal(
-            mean=mean, std=std, size=(out_features, in_features), dtype=dtype, device=device
-        )
-        # Truncate to avoid outlier weights that can destabilize training
-        nn.init.trunc_normal_(param, a=-3 * std, b=3 * std)
+        param = torch.empty((out_features, in_features), dtype=dtype, device=device)
+        nn.init.normal_(param, mean=0.0, std=GPT_INIT_STD)
         # Init the weight via the nn.Parameter
         self.weight = nn.Parameter(data=param)
 
@@ -65,14 +61,8 @@ class Embedding(nn.Module):
         dtype: Optional[torch.dtype] = None,
     ):
         super().__init__()
-        # Specify mean for the param initialization
-        mean, std = 0, 1
-        # Init the params from the normal distribution with said mean and std
-        param = torch.normal(
-            mean=mean, std=std, size=(num_embeddings, embedding_dim), dtype=dtype, device=device
-        )
-        # Truncate to stay within predictable bounds
-        nn.init.trunc_normal_(param, a=-3, b=3)
+        param = torch.empty((num_embeddings, embedding_dim), dtype=dtype, device=device)
+        nn.init.normal_(param, mean=0.0, std=GPT_INIT_STD)
         # Init the embedding via the nn.Parameter
         self.weight = nn.Parameter(data=param)
 
@@ -141,25 +131,14 @@ class SwiGLU(nn.Module):
         # Init d_ff dimension (typically 8/3 * d_model in Llama)
         self.d_ff = (8 / 3) * d_model if not d_ff else d_ff
         assert self.d_ff % 64 == 0, "The dimensionality of the feedforward is not a multiple of 64"
-
-        # Specify Xavier initialization for weights
-        mean, std = 0, np.sqrt(2 / (d_model + d_ff))
-
         # w1 and w3 are for the gated part; w2 is for the projection back to d_model
-        self.w1 = nn.Parameter(
-            data=torch.normal(mean, std, (d_ff, d_model), device=device, dtype=dtype)
-        )
-        self.w3 = nn.Parameter(
-            data=torch.normal(mean, std, (d_ff, d_model), device=device, dtype=dtype)
-        )
-        self.w2 = nn.Parameter(
-            data=torch.normal(mean, std, (d_model, d_ff), device=device, dtype=dtype)
-        )
+        self.w1 = nn.Parameter(data=torch.empty((d_ff, d_model), device=device, dtype=dtype))
+        self.w3 = nn.Parameter(data=torch.empty((d_ff, d_model), device=device, dtype=dtype))
+        self.w2 = nn.Parameter(data=torch.empty((d_model, d_ff), device=device, dtype=dtype))
 
-        # Truncate weights for stability
-        nn.init.trunc_normal_(self.w1, a=-3 * std, b=3 * std)
-        nn.init.trunc_normal_(self.w3, a=-3 * std, b=3 * std)
-        nn.init.trunc_normal_(self.w2, a=-3 * std, b=3 * std)
+        nn.init.normal_(self.w1, mean=0.0, std=GPT_INIT_STD)
+        nn.init.normal_(self.w3, mean=0.0, std=GPT_INIT_STD)
+        nn.init.normal_(self.w2, mean=0.0, std=GPT_INIT_STD)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, T, d_model)
