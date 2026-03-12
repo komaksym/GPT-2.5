@@ -332,11 +332,13 @@ def main() -> None:
     setup()
 
     rank = 0
+    local_rank = 0
     world_size = 1
     my_auto_wrap_policy, mp_policy = None, None
 
     if is_distributed():
         rank = int(os.environ["RANK"])
+        local_rank = int(os.environ["LOCAL_RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
 
         torch.cuda.set_device(rank)
@@ -367,6 +369,9 @@ def main() -> None:
     train_data = hf_hub_download(repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_train.bin")
     val_data = hf_hub_download(repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_test.bin")
 
+    if local_rank == 0:
+        breakpoint()
+
     # Create data loaders
     train_set_loader = DataLoader(train_data, args.batch_size, args.context_length,
                                   rank=rank, world_size=world_size)
@@ -391,7 +396,7 @@ def main() -> None:
         args.eps,
         args.weight_decay,
         device,
-        rank,
+        local_rank,
         my_auto_wrap_policy,
         mp_policy,
         args.checkpoint,
