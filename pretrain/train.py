@@ -246,7 +246,7 @@ def training_together(
             pbar.update(1)
 
         # Run evaluation
-        if i % 100 == 0:
+        if i % 500 == 0:
             # Wandb table for tracking generated sequences
             generated_seqs = run_evaluation(
                 val_set_loader, model, context_length, device, run, rank, i
@@ -269,7 +269,7 @@ def training_together(
                 run.log({"generated_sequences": master_table, "HellaSwag score": hs_score})
 
         # Save checkpoint
-        if i >= 500 and i % 500 == 0:
+        if i >= 1000 and i % 1000 == 0:
             # Save a new checkpoint only if cur_loss < last_loss
             if loss_accum < last_checkpoint_loss:
                 if master_rank:
@@ -332,13 +332,11 @@ def main() -> None:
     setup()
 
     rank = 0
-    local_rank = 0
     world_size = 1
     my_auto_wrap_policy, mp_policy = None, None
 
     if is_distributed():
         rank = int(os.environ["RANK"])
-        local_rank = int(os.environ["LOCAL_RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
 
         torch.cuda.set_device(rank)
@@ -369,9 +367,6 @@ def main() -> None:
     train_data = hf_hub_download(repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_train.bin")
     val_data = hf_hub_download(repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_test.bin")
 
-    if local_rank == 0:
-        breakpoint()
-
     # Create data loaders
     train_set_loader = DataLoader(train_data, args.batch_size, args.context_length,
                                   rank=rank, world_size=world_size)
@@ -396,7 +391,7 @@ def main() -> None:
         args.eps,
         args.weight_decay,
         device,
-        local_rank,
+        rank,
         my_auto_wrap_policy,
         mp_policy,
         args.checkpoint,
