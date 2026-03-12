@@ -192,7 +192,7 @@ def training_together(
     # Check if checkpoint exists
     if checkpoint and os.path.exists(checkpoint):
         # If it does, load it and keep training from the checkpoint
-        i = fsdp_load_checkpoint(checkpoint, model, optimizer, rank)
+        i = fsdp_load_checkpoint(checkpoint, model, optimizer)
         if master_rank:
             print(f"Continuing training from checkpoint at iteration {i}!")
     else:
@@ -270,8 +270,18 @@ def training_together(
 
         # Save checkpoint
         if i >= 1000 and i % 1000 == 0:
-            # Save a new checkpoint only if cur_loss < last_loss
-            if loss_accum < last_checkpoint_loss:
+            should_save_checkpoint = master_rank and loss_accum < last_checkpoint_loss
+            if dist.is_available() and dist.is_initialized():
+                decision = torch.tensor(
+                    int(should_save_checkpoint),
+                    device=device,
+                    dtype=torch.int32,
+                )
+                dist.broadcast(decision, src=0)
+                should_save_checkpoint = bool(decision.item())
+
+            # Save a new checkpoint only if the synchronized loss improves
+            if should_save_checkpoint:
                 if master_rank:
                     print("Saving a checkpoint...")
                 # Create a folder
@@ -279,14 +289,24 @@ def training_together(
                 os.makedirs(folder_name, exist_ok=True)
                 fsdp_save_checkpoint(model, optimizer, i, temp_path)
                 # Update last checkpoint loss
-                last_checkpoint_loss = loss_accum
                 if master_rank:
+                    last_checkpoint_loss = loss_accum
                     print("Checkpoint was saved.")
 
         # If about to finish training, delete the mid training checkpoint
         # And save the full training checkpoint
         if i == train_steps - 1:
-            if loss_accum < last_checkpoint_loss:
+            should_save_final_checkpoint = master_rank and loss_accum < last_checkpoint_loss
+            if dist.is_available() and dist.is_initialized():
+                decision = torch.tensor(
+                    int(should_save_final_checkpoint),
+                    device=device,
+                    dtype=torch.int32,
+                )
+                dist.broadcast(decision, src=0)
+                should_save_final_checkpoint = bool(decision.item())
+
+            if should_save_final_checkpoint:
                 # Delete the mid training checkpoint
                 if master_rank:
                     print("Saving a checkpoint...")
@@ -296,6 +316,7 @@ def training_together(
                 # Create a final checkpoint
                 fsdp_save_checkpoint(model, optimizer, i+1, final_path)
                 if master_rank:
+                    last_checkpoint_loss = loss_accum
                     print("Saved final checkpoint!")
         # Next training step
         i += 1
