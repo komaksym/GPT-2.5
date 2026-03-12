@@ -1,8 +1,21 @@
-from pretrain.model import load_checkpoint, TransformerLM, GPTConfig, top_p_sampling, softmax
+from pretrain.model import (
+    load_checkpoint,
+    TransformerLM,
+    GPTConfig,
+    top_p_sampling,
+    softmax,
+)
 import tiktoken
 from datasets import load_dataset
-from transformers import AutoTokenizer, TrainingArguments, Trainer, \
-     PreTrainedModel, PretrainedConfig, DataCollatorWithPadding, PreTrainedTokenizerBase
+from transformers import (
+    AutoTokenizer,
+    TrainingArguments,
+    Trainer,
+    PreTrainedModel,
+    PretrainedConfig,
+    DataCollatorWithPadding,
+    PreTrainedTokenizerBase,
+)
 from transformers.modeling_outputs import CausalLMOutput
 from transformers.utils import PaddingStrategy
 from huggingface_hub import snapshot_download
@@ -20,29 +33,19 @@ def format_prompt(instruction, context):
     context = context.strip() if context else ""
 
     if context:
-        prompt = (
-            "Instruction:\n"
-            f"{instruction}\n"
-            "Context:\n"
-            f"{context}\n"
-            "Response:\n"
-        )
+        prompt = f"Instruction:\n{instruction}\nContext:\n{context}\nResponse:\n"
     else:
-        prompt = (
-            "Instruction:\n"
-            f"{instruction}\n"
-            "Response:\n"
-        )
+        prompt = f"Instruction:\n{instruction}\nResponse:\n"
     return prompt
-    
+
 
 def tokenize(examples, tokenizer):
     inputs = []
     targets = []
     attention_masks = []
 
-    for instruction, context, response in zip(
-        examples["instruction"], examples["context"], examples["response"]
+    for response, context, instruction in zip(
+        examples["output"], examples["input"], examples["instruction"]
     ):
         prompt = format_prompt(instruction, context)
 
@@ -64,20 +67,19 @@ def tokenize(examples, tokenizer):
 
 
 def pad_sample(sample, max_length, tokenizer):
-    pad_amount = max_length - len(sample['input_ids'])
+    pad_amount = max_length - len(sample["input_ids"])
     return {
-        "input_ids": sample['input_ids'] + [tokenizer.pad_token_id] * pad_amount,
-        "labels": sample['labels'] + [-100] * pad_amount,
-        "attention_mask": sample['attention_mask'] + [0] * pad_amount
+        "input_ids": sample["input_ids"] + [tokenizer.pad_token_id] * pad_amount,
+        "labels": sample["labels"] + [-100] * pad_amount,
+        "attention_mask": sample["attention_mask"] + [0] * pad_amount,
     }
 
 
 def pad_dataset(dataset, tokenizer):
     for split in dataset:
-        max_length = max(len(sample) for sample in dataset[split]['input_ids'])    
+        max_length = max(len(sample) for sample in dataset[split]["input_ids"])
         dataset[split] = dataset[split].map(
-            pad_sample,
-            fn_kwargs={"max_length": max_length, "tokenizer": tokenizer}
+            pad_sample, fn_kwargs={"max_length": max_length, "tokenizer": tokenizer}
         )
     return dataset
 
@@ -110,6 +112,7 @@ class MyConfig(PretrainedConfig):
 
 class HFTransformerLM(PreTrainedModel):
     config_class = MyConfig
+    _tied_weights_keys = {"model.linear.weight": "model.emb.weight"}
 
     def __init__(self, config):
         super().__init__(config)
@@ -124,7 +127,13 @@ class HFTransformerLM(PreTrainedModel):
             config.device,
         )
         self.post_init()
-    
+
+    def get_input_embeddings(self):
+        return self.model.emb
+
+    def get_output_embeddings(self):
+        return self.model.linear
+
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
         logits, _ = self.model(input_ids, attention_mask=attention_mask)
 
@@ -136,7 +145,7 @@ class HFTransformerLM(PreTrainedModel):
             loss = F.cross_entropy(
                 shift_logits.view(-1, shift_logits.size(-1)),
                 shift_labels.view(-1),
-                ignore_index=-100
+                ignore_index=-100,
             )
         return CausalLMOutput(loss=loss, logits=logits)
 
@@ -200,16 +209,27 @@ def generate(
 
 def inference_test(prompt=None, pretraining_checkpoint=True):
     if pretraining_checkpoint:
-        base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
-                               GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
-                               GPTConfig.theta, GPTConfig.device)
+        base_model = TransformerLM(
+            GPTConfig.vocab_size,
+            GPTConfig.context_length,
+            GPTConfig.num_layers,
+            GPTConfig.d_model,
+            GPTConfig.num_heads,
+            GPTConfig.d_ff,
+            GPTConfig.theta,
+            GPTConfig.device,
+        )
 
         # Download pretraining checkpoint
-        snapshot_download("itskoma/GPT2.5", allow_patterns="pretraining_checkpoint/*", 
-                                    repo_type="model", local_dir="checkpoints")
+        snapshot_download(
+            "itskoma/GPT2.5",
+            allow_patterns="pretraining_checkpoint/*",
+            repo_type="model",
+            local_dir="checkpoints",
+        )
         # Load state dict to the model
         load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
-        
+
         # Model
         model = HFTransformerLM(MyConfig())
         model.model.load_state_dict(base_model.state_dict())
@@ -220,9 +240,15 @@ def inference_test(prompt=None, pretraining_checkpoint=True):
     model.to(device)
 
     seqs = generate(
-        prompt=prompt, max_tokens=50, 
-        context_length=GPTConfig.context_length, batch_size=5,
-          model=model, temp=0.9, top_p=0.8, device=model.device)
+        prompt=prompt,
+        max_tokens=50,
+        context_length=GPTConfig.context_length,
+        batch_size=5,
+        model=model,
+        temp=0.9,
+        top_p=0.8,
+        device=model.device,
+    )
 
     for s in seqs:
         print(s)
@@ -241,14 +267,18 @@ class CustomCollatorWithPadding(DataCollatorWithPadding):
 
         for sample in batch:
             pad_amount = max_length - len(sample["input_ids"])
-            sample["input_ids"] = sample["input_ids"] + [self.tokenizer.pad_token_id] * pad_amount
+            sample["input_ids"] = (
+                sample["input_ids"] + [self.tokenizer.pad_token_id] * pad_amount
+            )
             sample["labels"] = sample["labels"] + [-100] * pad_amount
             sample["attention_mask"] = sample["attention_mask"] + [0] * pad_amount
 
         return {
             "input_ids": torch.tensor([sample["input_ids"] for sample in batch]),
             "labels": torch.tensor([sample["labels"] for sample in batch]),
-            "attention_mask": torch.tensor([sample["attention_mask"] for sample in batch])
+            "attention_mask": torch.tensor(
+                [sample["attention_mask"] for sample in batch]
+            ),
         }
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
@@ -260,41 +290,60 @@ def main():
     # Track with wandb
     wandb.init(project="gpt-2.5")
 
-    base_model = TransformerLM(GPTConfig.vocab_size, GPTConfig.context_length, GPTConfig.num_layers,
-                               GPTConfig.d_model, GPTConfig.num_heads, GPTConfig.d_ff,
-                               GPTConfig.theta, GPTConfig.device)
+    base_model = TransformerLM(
+        GPTConfig.vocab_size,
+        GPTConfig.context_length,
+        GPTConfig.num_layers,
+        GPTConfig.d_model,
+        GPTConfig.num_heads,
+        GPTConfig.d_ff,
+        GPTConfig.theta,
+        GPTConfig.device,
+    )
 
     # Download pretraining checkpoint
-    snapshot_download("itskoma/GPT2.5", allow_patterns="pretraining_checkpoint/*", 
-                                   repo_type="model", local_dir="checkpoints")
+    snapshot_download(
+        "itskoma/GPT2.5",
+        allow_patterns="pretraining_checkpoint/*",
+        repo_type="model",
+        local_dir="checkpoints",
+    )
     # Load state dict to the model
     load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
     # Load the dataset for instruction tuning
-    dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned", split="train")
+    # dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned", split="train")
+    dataset = load_dataset("yahma/alpaca-cleaned", split="train")
     # Perform stratified split
-    dataset = dataset.class_encode_column("category").train_test_split(
-        test_size=0.1,
-        stratify_by_column='category',
-        seed=42)
+    # dataset = dataset.class_encode_column("category").train_test_split(
+    # test_size=0.1,
+    # stratify_by_column='category',
+    # seed=42)
+
+    dataset = dataset.train_test_split(test_size=0.1, seed=42)
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     tokenizer.pad_token = tokenizer.eos_token
 
-    dataset = dataset.map(tokenize, batched=True, fn_kwargs={"tokenizer": tokenizer},
-                          remove_columns = dataset['train'].column_names)
+    dataset = dataset.map(
+        tokenize,
+        batched=True,
+        fn_kwargs={"tokenizer": tokenizer},
+        remove_columns=dataset["train"].column_names,
+    )
     # Pad dataset
-    #dataset = pad_dataset(dataset, tokenizer)
+    # dataset = pad_dataset(dataset, tokenizer)
     data_collator = CustomCollatorWithPadding(tokenizer)
 
     # Slice for faster testing iteration
-    #dataset["train"] = dataset["train"].select(range(10))
-    #dataset["test"] = dataset["test"].select(range(10))
+    # dataset["train"] = dataset["train"].select(range(10))
+    # dataset["test"] = dataset["test"].select(range(10))
 
     # Model
     config = MyConfig()
     model = HFTransformerLM(config)
     model.model.load_state_dict(base_model.state_dict())
-    BATCH_SIZE = 8
+    model.tie_weights()
+    BATCH_SIZE = 4
 
     training_args = TrainingArguments(
         eval_strategy="epoch",
@@ -305,9 +354,10 @@ def main():
         per_device_eval_batch_size=BATCH_SIZE,
         prediction_loss_only=True,
         num_train_epochs=3,
+        gradient_accumulation_steps=2,
         learning_rate=1e-5,
-        #lr_scheduler_type="cosine",
-        #warmup_steps=0.05,
+        # lr_scheduler_type="cosine",
+        # warmup_steps=0.05,
     )
 
     trainer = Trainer(
@@ -323,6 +373,6 @@ def main():
 
 
 if __name__ == "__main__":
-    #inference_test(prompt="The capital of Germany is ", pretraining_checkpoint=True)
+    # inference_test(prompt="The capital of Germany is ", pretraining_checkpoint=True)
     main()
-    #inference_test(prompt="2+2 is ", pretraining_checkpoint=False)
+    # inference_test(prompt="2+2 is ", pretraining_checkpoint=False)
