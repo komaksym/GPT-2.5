@@ -101,7 +101,9 @@ class RMSNorm(nn.Module):
         in_dtype = x.dtype
         x = x.to(torch.float32)
         # Calculate RMS = sqrt(mean(x^2) + eps)
-        rms = torch.sqrt(1 / self.d_model * reduce(x**2, "B T C -> B T 1", "sum") + self.eps)
+        rms = torch.sqrt(
+            1 / self.d_model * reduce(x**2, "B T C -> B T 1", "sum") + self.eps
+        )
         # Normalize: x / RMS * gain_parameter
         rmsnorm = x / rms * self.weight
         # Downcast back to the initial dtype (e.g., bfloat16 or float16)
@@ -130,11 +132,19 @@ class SwiGLU(nn.Module):
         super().__init__()
         # Init d_ff dimension (typically 8/3 * d_model in Llama)
         self.d_ff = (8 / 3) * d_model if not d_ff else d_ff
-        assert self.d_ff % 64 == 0, "The dimensionality of the feedforward is not a multiple of 64"
+        assert self.d_ff % 64 == 0, (
+            "The dimensionality of the feedforward is not a multiple of 64"
+        )
         # w1 and w3 are for the gated part; w2 is for the projection back to d_model
-        self.w1 = nn.Parameter(data=torch.empty((d_ff, d_model), device=device, dtype=dtype))
-        self.w3 = nn.Parameter(data=torch.empty((d_ff, d_model), device=device, dtype=dtype))
-        self.w2 = nn.Parameter(data=torch.empty((d_model, d_ff), device=device, dtype=dtype))
+        self.w1 = nn.Parameter(
+            data=torch.empty((d_ff, d_model), device=device, dtype=dtype)
+        )
+        self.w3 = nn.Parameter(
+            data=torch.empty((d_ff, d_model), device=device, dtype=dtype)
+        )
+        self.w2 = nn.Parameter(
+            data=torch.empty((d_model, d_ff), device=device, dtype=dtype)
+        )
 
         nn.init.normal_(self.w1, mean=0.0, std=GPT_INIT_STD)
         nn.init.normal_(self.w3, mean=0.0, std=GPT_INIT_STD)
@@ -175,9 +185,9 @@ class RoPE(nn.Module):
         inv_freq = self.theta ** (-2.0 * j / float(self.d_k))  # (d_half,)
 
         # Compute angles for each position: angle = pos * freq
-        pos = torch.arange(self.max_seq_len, dtype=torch.float32, device=self.device).unsqueeze(
-            1
-        )  # (max_seq_len, 1)
+        pos = torch.arange(
+            self.max_seq_len, dtype=torch.float32, device=self.device
+        ).unsqueeze(1)  # (max_seq_len, 1)
         angles = pos * inv_freq.unsqueeze(0)  # (max_seq_len, d_half)
 
         # Precompute cos and sin buffers for the entire context window
@@ -191,7 +201,9 @@ class RoPE(nn.Module):
         token_positions: (..., seq_len)
         """
         if x.shape[-1] != self.d_k:
-            raise ValueError(f"Last dim of x must be d_k={self.d_k}, got {x.shape[-1]}.")
+            raise ValueError(
+                f"Last dim of x must be d_k={self.d_k}, got {x.shape[-1]}."
+            )
         if token_positions.shape[-1] != x.shape[-2]:
             raise ValueError(
                 "token_positions must have same seq_len in its last dim as x's sequence dimension."
@@ -211,13 +223,17 @@ class RoPE(nn.Module):
         x_rot_odd = x_even * sin_pos + x_odd * cos_pos
 
         # Recombine into the original d_k shape
-        x_rot = torch.stack([x_rot_even, x_rot_odd], dim=-1)  # (..., seq_len, d_half, 2)
+        x_rot = torch.stack(
+            [x_rot_even, x_rot_odd], dim=-1
+        )  # (..., seq_len, d_half, 2)
         new_shape = list(x.shape[:-2]) + [x.shape[-2], self.d_k]
         x_rot = x_rot.view(*new_shape)
         return x_rot
 
 
-def softmax(x: torch.Tensor, dim: int, is_log: bool = False, temp: float = 1.0) -> torch.Tensor:
+def softmax(
+    x: torch.Tensor, dim: int, is_log: bool = False, temp: float = 1.0
+) -> torch.Tensor:
     """
     Numerically stable Softmax or Log-Softmax implementation.
     Uses the LogSumExp trick to prevent overflow.
@@ -227,7 +243,9 @@ def softmax(x: torch.Tensor, dim: int, is_log: bool = False, temp: float = 1.0) 
 
     # LogSumExp trick: log(sum(exp(x_i))) = m + log(sum(exp(x_i - m))) where m = max(x)
     m = torch.max(x_scaled, dim=dim, keepdim=True).values
-    log_sum_exp = m + torch.log(torch.sum(torch.exp(x_scaled - m), dim=dim, keepdim=True))
+    log_sum_exp = m + torch.log(
+        torch.sum(torch.exp(x_scaled - m), dim=dim, keepdim=True)
+    )
 
     # log_softmax(x) = x - log_sum_exp(x)
     log_probs = x_scaled - log_sum_exp
@@ -239,7 +257,10 @@ def softmax(x: torch.Tensor, dim: int, is_log: bool = False, temp: float = 1.0) 
 
 
 def scaled_dot_prod_attn(
-    Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, mask: Optional[torch.Tensor] = None
+    Q: torch.Tensor,
+    K: torch.Tensor,
+    V: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     d_k = Q.shape[-1]
 
@@ -286,8 +307,9 @@ class MultiheadSelfAttention(nn.Module):
         if theta is not None and max_seq_len is not None:
             self.rope = RoPE(theta, self.d_k, max_seq_len, device)
 
-    def forward(self, x: torch.Tensor, token_positions: torch.Tensor = None,
-                attention_mask=None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, token_positions: torch.Tensor = None, attention_mask=None
+    ) -> torch.Tensor:
         # x: (B, T, d_model)
         Q = self.Wq(x)
         K = self.Wk(x)
@@ -349,7 +371,9 @@ class TransformerBlock(nn.Module):
 
         self.norm_att = RMSNorm(d_model, device=device)
         self.norm_ff = RMSNorm(d_model, device=device)
-        self.mhsa = MultiheadSelfAttention(d_model, num_heads, theta, max_seq_len, device)
+        self.mhsa = MultiheadSelfAttention(
+            d_model, num_heads, theta, max_seq_len, device
+        )
         self.ffn = SwiGLU(d_model, d_ff, device=device)
 
     def forward(self, x: torch.Tensor, attention_mask=None) -> torch.Tensor:
@@ -382,7 +406,9 @@ class TransformerLM(nn.Module):
 
         self.emb = Embedding(vocab_size, d_model, device=device)
         self.tblocks = nn.ModuleList(
-            TransformerBlock(d_model, num_heads, d_ff, theta, context_length, device=device)
+            TransformerBlock(
+                d_model, num_heads, d_ff, theta, context_length, device=device
+            )
             for _ in range(num_layers)
         )
         self.norm = RMSNorm(d_model, device=device)
@@ -392,8 +418,10 @@ class TransformerLM(nn.Module):
         self.linear.weight = self.emb.weight
 
     def forward(
-        self, x: torch.Tensor, targets: Optional[torch.Tensor] = None,
-        attention_mask=None
+        self,
+        x: torch.Tensor,
+        targets: Optional[torch.Tensor] = None,
+        attention_mask=None,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Input: x (token IDs) shape (B, T)
@@ -459,7 +487,12 @@ class AdamW(torch.optim.Optimizer):
     ) -> None:
         if lr < 0:
             raise ValueError(f"Invalid learning rate: {lr}")
-        defaults = {"lr": lr, "betas": betas, "epsilon": eps, "weight_decay": weight_decay}
+        defaults = {
+            "lr": lr,
+            "betas": betas,
+            "epsilon": eps,
+            "weight_decay": weight_decay,
+        }
         super().__init__(params, defaults)
 
     def step(self, closure: Optional[Callable] = None):
@@ -518,7 +551,9 @@ class AdamW(torch.optim.Optimizer):
         return loss
 
 
-def learning_rate_schedule(t: int, a_max: float, a_min: float, T_w: int, T_c: int) -> float:
+def learning_rate_schedule(
+    t: int, a_max: float, a_min: float, T_w: int, T_c: int
+) -> float:
     """
     Cosine Learning Rate Schedule with Warmup.
     t: current iteration
@@ -532,14 +567,18 @@ def learning_rate_schedule(t: int, a_max: float, a_min: float, T_w: int, T_c: in
         a_t = t / T_w * a_max
     # 2. Cosine Annealing: Decay LR from a_max down to a_min
     elif T_w <= t <= T_c:
-        a_t = a_min + 1 / 2 * (1 + math.cos((t - T_w) / (T_c - T_w) * math.pi)) * (a_max - a_min)
+        a_t = a_min + 1 / 2 * (1 + math.cos((t - T_w) / (T_c - T_w) * math.pi)) * (
+            a_max - a_min
+        )
     # 3. Post Annealing: Keep LR at a_min
     else:
         a_t = a_min
     return a_t
 
 
-def gradient_clipping(params: typing.Iterable[nn.Parameter], max_l2_norm: float) -> None:
+def gradient_clipping(
+    params: typing.Iterable[nn.Parameter], max_l2_norm: float
+) -> None:
     """
     Global Gradient Clipping to prevent exploding gradients.
     Rescales gradients if their total L2 norm exceeds max_l2_norm.
@@ -597,7 +636,11 @@ class AppState(Stateful):
         model_state_dict, optimizer_state_dict = get_state_dict(
             self.model, self.optimizer
         )
-        return {"model": model_state_dict, "optimizer": optimizer_state_dict, "iteration": self.iteration}
+        return {
+            "model": model_state_dict,
+            "optimizer": optimizer_state_dict,
+            "iteration": self.iteration,
+        }
 
     def load_state_dict(self, state_dict):
         # sets our state dicts on the model and optimizer, now that we've loaded
@@ -621,7 +664,13 @@ def fsdp_save_checkpoint(
     Only rank 0 performs the actual I/O, but all ranks participate in state-dict gathering.
     """
 
-    state = {"app": AppState(model, optimizer, iteration, )}
+    state = {
+        "app": AppState(
+            model,
+            optimizer,
+            iteration,
+        )
+    }
     dcp.save(state, checkpoint_id=out_path)
 
 
@@ -637,10 +686,7 @@ def fsdp_load_checkpoint(
 
     app = AppState(model, optimizer)
     state = {"app": app}
-    dcp.load(
-        state_dict=state,
-        checkpoint_id=checkpoint_path
-    )
+    dcp.load(state_dict=state, checkpoint_id=checkpoint_path)
     return int(app.iteration)
 
 
@@ -657,10 +703,7 @@ def load_checkpoint(
         }
     }
 
-    dcp.load(
-        state_dict=state,
-        checkpoint_id=checkpoint_path
-    )
+    dcp.load(state_dict=state, checkpoint_id=checkpoint_path)
     model.load_state_dict(state["app"]["model"])
 
 
@@ -673,7 +716,7 @@ def generate(
     model: nn.Module,
     temp: float = 0.9,
     top_p: float = 0.8,
-    device: torch.device = None
+    device: torch.device = None,
 ) -> list[str]:
     """
     Main generation loop for the LLM.
@@ -692,6 +735,9 @@ def generate(
         # Encode prompt and move to device
         inputs = torch.tensor(enc.encode(prompt), device=device).unsqueeze(0)
         for _ in range(max_tokens):
+            # Truncate sequence if it exceeds the model's maximum context length
+            if inputs.shape[-1] > context_length:
+                inputs = inputs[:, -context_length:]
             # Generate next token logits using autocast for speed/memory efficiency
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                 logits, _ = model(inputs)
@@ -703,9 +749,6 @@ def generate(
             # Stop if the end-of-text special token is generated
             if enc.decode([next_token.item()]) == "<|endoftext|>":
                 break
-            # Truncate sequence if it exceeds the model's maximum context length
-            if inputs.shape[-1] > context_length:
-                inputs = inputs[:, -context_length:]
 
         # Record the final generated sequence
         sentences.append(
@@ -764,7 +807,9 @@ class DataLoader:
     Avoids loading the entire dataset into RAM.
     """
 
-    def __init__(self, filename: str | os.PathLike, B: int, T: int, rank=0, world_size=1) -> None:
+    def __init__(
+        self, filename: str | os.PathLike, B: int, T: int, rank=0, world_size=1
+    ) -> None:
         self.B = B
         self.T = T
         self.rank = rank
@@ -782,7 +827,7 @@ class DataLoader:
         if self.local_pos + self.span + 1 > self.n_tokens:
             self.local_pos = self.span * self.rank
 
-        start_pos = self.local_pos 
+        start_pos = self.local_pos
         end_pos = start_pos + self.span + 1
 
         # Slice the dataset. Targets are shifted by 1 relative to inputs.
@@ -815,8 +860,10 @@ class GPTConfig:
     eps = 1e-8
     weight_decay = 0.1
     device = torch.device(
-    "cuda" if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available()
-    else "cpu"
-)
-    a_max = 6e-4 
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if torch.backends.mps.is_available()
+        else "cpu"
+    )
+    a_max = 6e-4
