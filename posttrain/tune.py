@@ -7,7 +7,12 @@ import torch.nn.functional as F
 import wandb
 from datasets import load_dataset
 from huggingface_hub import snapshot_download
-from pretrain.model import GPTConfig, TransformerLM, generate as pretrain_generate, load_checkpoint
+from pretrain.model import (
+    GPTConfig,
+    TransformerLM,
+    generate as pretrain_generate,
+    load_checkpoint,
+)
 from transformers import (
     AutoTokenizer,
     DataCollatorWithPadding,
@@ -25,8 +30,7 @@ DEFAULT_PRETRAINING_CHECKPOINT_PATTERN = "pretraining_checkpoint/*"
 DEFAULT_PRETRAINING_CHECKPOINT_PATH = "checkpoints/pretraining_checkpoint/"
 DEFAULT_PRETRAINING_LOCAL_DIR = "checkpoints"
 DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint"
-DEFAULT_DOLLY_DATASET_ID = "Cleanlab/databricks-dolly-15k-cleaned"
-DEFAULT_DOLLY_SPLIT = "train"
+DEFAULT_DATASET_ID = "Cleanlab/databricks-dolly-15k-cleaned"
 DEFAULT_BATCH_SIZE = 8
 
 
@@ -35,18 +39,8 @@ def format_prompt(instruction, context):
     context = context.strip() if context else ""
 
     if context:
-        return (
-            "Instruction:\n"
-            f"{instruction}\n"
-            "Context:\n"
-            f"{context}\n"
-            "Response:\n"
-        )
-    return (
-        "Instruction:\n"
-        f"{instruction}\n"
-        "Response:\n"
-    )
+        return f"Instruction:\n{instruction}\nContext:\n{context}\nResponse:\n"
+    return f"Instruction:\n{instruction}\nResponse:\n"
 
 
 def tokenize(examples, tokenizer):
@@ -66,7 +60,9 @@ def tokenize(examples, tokenizer):
             continue
 
         inputs.append(input_ids)
-        targets.append([-100] * len(prompt_ids) + response_ids + [tokenizer.eos_token_id])
+        targets.append(
+            [-100] * len(prompt_ids) + response_ids + [tokenizer.eos_token_id]
+        )
         attention_masks.append([1] * len(input_ids))
 
     return {"input_ids": inputs, "labels": targets, "attention_mask": attention_masks}
@@ -204,8 +200,8 @@ def _build_hf_model(base_model):
 
 def _load_instruction_dataset(
     tokenizer,
-    dataset_id: str = DEFAULT_DOLLY_DATASET_ID,
-    split: str = DEFAULT_DOLLY_SPLIT,
+    dataset_id: str = DEFAULT_DATASET_ID,
+    split: str = "train",
 ):
     """Load, stratify, and tokenize the instruction-tuning dataset."""
     dataset = load_dataset(dataset_id, split=split)
@@ -298,11 +294,15 @@ class CustomCollatorWithPadding(DataCollatorWithPadding):
     def pad_batch(self, batch):
         max_length = max(len(sample["input_ids"]) for sample in batch)
         # Keep label padding aligned with the model's ignore_index=-100 loss masking.
-        padded_batch = [pad_sample(sample, max_length, self.tokenizer) for sample in batch]
+        padded_batch = [
+            pad_sample(sample, max_length, self.tokenizer) for sample in batch
+        ]
         return {
             "input_ids": torch.tensor([sample["input_ids"] for sample in padded_batch]),
             "labels": torch.tensor([sample["labels"] for sample in padded_batch]),
-            "attention_mask": torch.tensor([sample["attention_mask"] for sample in padded_batch]),
+            "attention_mask": torch.tensor(
+                [sample["attention_mask"] for sample in padded_batch]
+            ),
         }
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
@@ -315,8 +315,8 @@ def main(
     pretraining_checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
     pretraining_local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
     posttraining_checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
-    dataset_id: str = DEFAULT_DOLLY_DATASET_ID,
-    dataset_split: str = DEFAULT_DOLLY_SPLIT,
+    dataset_id: str = DEFAULT_DATASET_ID,
+    dataset_split: str = "train",
     batch_size: int = DEFAULT_BATCH_SIZE,
 ):
     """Fine-tune the pretrained base model on the configured instruction dataset."""
