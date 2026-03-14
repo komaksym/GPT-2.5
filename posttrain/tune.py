@@ -1,31 +1,33 @@
-from pretrain.model import (
-    load_checkpoint,
-    TransformerLM,
-    GPTConfig,
-    top_p_sampling,
-    softmax,
-)
-import tiktoken
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+import wandb
 from datasets import load_dataset
+from huggingface_hub import snapshot_download
+from pretrain.model import GPTConfig, TransformerLM, generate as pretrain_generate, load_checkpoint
 from transformers import (
     AutoTokenizer,
-    TrainingArguments,
-    Trainer,
-    PreTrainedModel,
-    PretrainedConfig,
     DataCollatorWithPadding,
+    PreTrainedModel,
     PreTrainedTokenizerBase,
+    PretrainedConfig,
+    Trainer,
+    TrainingArguments,
 )
 from transformers.modeling_outputs import CausalLMOutput
 from transformers.utils import PaddingStrategy
-from huggingface_hub import snapshot_download
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import wandb
-from dataclasses import dataclass
-from typing import Any
+
+DEFAULT_PRETRAINING_REPO_ID = "itskoma/GPT2.5"
+DEFAULT_PRETRAINING_CHECKPOINT_PATTERN = "pretraining_checkpoint/*"
+DEFAULT_PRETRAINING_CHECKPOINT_PATH = "checkpoints/pretraining_checkpoint/"
+DEFAULT_PRETRAINING_LOCAL_DIR = "checkpoints"
+DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint"
+DEFAULT_DOLLY_DATASET_ID = "Cleanlab/databricks-dolly-15k-cleaned"
+DEFAULT_DOLLY_SPLIT = "train"
+DEFAULT_BATCH_SIZE = 8
 
 
 def format_prompt(instruction, context):
@@ -33,10 +35,18 @@ def format_prompt(instruction, context):
     context = context.strip() if context else ""
 
     if context:
-        prompt = f"Instruction:\n{instruction}\nContext:\n{context}\nResponse:\n"
-    else:
-        prompt = f"Instruction:\n{instruction}\nResponse:\n"
-    return prompt
+        return (
+            "Instruction:\n"
+            f"{instruction}\n"
+            "Context:\n"
+            f"{context}\n"
+            "Response:\n"
+        )
+    return (
+        "Instruction:\n"
+        f"{instruction}\n"
+        "Response:\n"
+    )
 
 
 def tokenize(examples, tokenizer):
@@ -44,24 +54,20 @@ def tokenize(examples, tokenizer):
     targets = []
     attention_masks = []
 
-    for response, context, instruction in zip(
-        examples["output"], examples["input"], examples["instruction"]
+    for instruction, context, response in zip(
+        examples["instruction"], examples["context"], examples["response"]
     ):
         prompt = format_prompt(instruction, context)
-
         prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
         response_ids = tokenizer(response, add_special_tokens=False)["input_ids"]
-
         input_ids = prompt_ids + response_ids + [tokenizer.eos_token_id]
-        labels = [-100] * len(prompt_ids) + response_ids + [tokenizer.eos_token_id]
-        attention_mask = [1] * len(input_ids)
 
         if len(input_ids) > GPTConfig.context_length:
             continue
 
         inputs.append(input_ids)
-        targets.append(labels)
-        attention_masks.append(attention_mask)
+        targets.append([-100] * len(prompt_ids) + response_ids + [tokenizer.eos_token_id])
+        attention_masks.append([1] * len(input_ids))
 
     return {"input_ids": inputs, "labels": targets, "attention_mask": attention_masks}
 
@@ -79,7 +85,8 @@ def pad_dataset(dataset, tokenizer):
     for split in dataset:
         max_length = max(len(sample) for sample in dataset[split]["input_ids"])
         dataset[split] = dataset[split].map(
-            pad_sample, fn_kwargs={"max_length": max_length, "tokenizer": tokenizer}
+            pad_sample,
+            fn_kwargs={"max_length": max_length, "tokenizer": tokenizer},
         )
     return dataset
 
@@ -97,10 +104,9 @@ class MyConfig(PretrainedConfig):
         d_ff=GPTConfig.d_ff,
         theta=GPTConfig.theta,
         device=str(GPTConfig.device),
-        tie_word_embeddings=True,
         **kwargs,
     ):
-        super().__init__(**kwargs, tie_word_embeddings=tie_word_embeddings)
+        super().__init__(**kwargs)
         self.vocab_size = int(vocab_size)
         self.context_length = int(context_length)
         self.num_layers = int(num_layers)
@@ -116,6 +122,7 @@ class HFTransformerLM(PreTrainedModel):
     _tied_weights_keys = {"model.linear.weight": "model.emb.weight"}
 
     def __init__(self, config):
+        """Expose TransformerLM through the minimal HF interface used by Trainer."""
         super().__init__(config)
         self.model = TransformerLM(
             config.vocab_size,
@@ -142,12 +149,12 @@ class HFTransformerLM(PreTrainedModel):
         if labels is not None:
             shift_logits = logits[:, :-1, :].contiguous()
             shift_labels = labels[:, 1:].contiguous()
-
             loss = F.cross_entropy(
                 shift_logits.view(-1, shift_logits.size(-1)),
                 shift_labels.view(-1),
                 ignore_index=-100,
             )
+
         return CausalLMOutput(loss=loss, logits=logits)
 
 
@@ -156,86 +163,111 @@ def compute_metrics(eval_pred):
     return {"perplexity": np.exp(mean_loss)}
 
 
+def _build_base_model():
+    """Construct the raw pretrained TransformerLM with the project defaults."""
+    return TransformerLM(
+        GPTConfig.vocab_size,
+        GPTConfig.context_length,
+        GPTConfig.num_layers,
+        GPTConfig.d_model,
+        GPTConfig.num_heads,
+        GPTConfig.d_ff,
+        GPTConfig.theta,
+        GPTConfig.device,
+    )
+
+
+def _load_pretraining_model(
+    repo_id: str = DEFAULT_PRETRAINING_REPO_ID,
+    checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
+    checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
+    local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
+):
+    """Download and load a base checkpoint into a fresh TransformerLM."""
+    base_model = _build_base_model()
+    snapshot_download(
+        repo_id,
+        allow_patterns=checkpoint_pattern,
+        repo_type="model",
+        local_dir=local_dir,
+    )
+    load_checkpoint(checkpoint_path, base_model)
+    return base_model
+
+
+def _build_hf_model(base_model):
+    """Wrap a loaded base model for HF Trainer while keeping tied weights exposed."""
+    model = HFTransformerLM(MyConfig())
+    model.model.load_state_dict(base_model.state_dict())
+    return model
+
+
+def _load_instruction_dataset(
+    tokenizer,
+    dataset_id: str = DEFAULT_DOLLY_DATASET_ID,
+    split: str = DEFAULT_DOLLY_SPLIT,
+):
+    """Load, stratify, and tokenize the instruction-tuning dataset."""
+    dataset = load_dataset(dataset_id, split=split)
+    dataset = dataset.class_encode_column("category").train_test_split(
+        test_size=0.1,
+        stratify_by_column="category",
+        seed=42,
+    )
+    return dataset.map(
+        tokenize,
+        batched=True,
+        fn_kwargs={"tokenizer": tokenizer},
+        remove_columns=dataset["train"].column_names,
+    )
+
+
 @torch.inference_mode()
 def generate(
     prompt: str,
     max_tokens: int,
     context_length: int,
     batch_size: int,
-    model: nn.Module,
+    model,
     temp: float,
     top_p: float,
     device: torch.device,
 ) -> list[str]:
-    """
-    Main generation loop for the LLM.
-    prompt: starting text
-    max_tokens: number of tokens to generate per sequence
-    context_length: maximum window size the model can handle
-    batch_size: number of sequences to generate
-    model: the transformer model
-    temp: softmax temperature
-    top_p: nucleus sampling threshold
-    """
-    enc = tiktoken.get_encoding("gpt2")
-    sentences = []
+    """Accept either the HF wrapper or the raw model and delegate generation."""
     model.eval()
-
-    for i in range(batch_size):
-        # Encode prompt and move to device
-        inputs = torch.tensor(enc.encode(prompt), device=device).unsqueeze(0)
-        for _ in range(max_tokens):
-            # Generate next token logits using autocast for speed/memory efficiency
-            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                output = model(inputs)
-                logits = output.logits
-            # Apply temperature and top-p sampling on the last token's logits
-            probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
-            next_token = top_p_sampling(probs, p=top_p)
-            # Append token to sequence
-            inputs = torch.cat((inputs, next_token), dim=1)
-            # Stop if the end-of-text special token is generated
-            if enc.decode([next_token.item()]) == "<|endoftext|>":
-                break
-            # Truncate sequence if it exceeds the model's maximum context length
-            if inputs.shape[-1] > context_length:
-                inputs = inputs[:, -context_length:]
-
-        # Record the final generated sequence
-        sentences.append(
-            f"\nGenerated sequence №{i + 1}:\n" + enc.decode(inputs[0].tolist()) + "\n"
-        )
-    return sentences
+    return pretrain_generate(
+        prompt=prompt,
+        max_tokens=max_tokens,
+        context_length=context_length,
+        batch_size=batch_size,
+        model=getattr(model, "model", model),
+        temp=temp,
+        top_p=top_p,
+        device=device,
+    )
 
 
-def inference_test(prompt=None, pretraining_checkpoint=True):
+def inference_test(
+    prompt=None,
+    pretraining_checkpoint=True,
+    pretraining_repo_id: str = DEFAULT_PRETRAINING_REPO_ID,
+    pretraining_checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
+    pretraining_checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
+    pretraining_local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
+    posttraining_checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+):
+    """Run a quick generation smoke test from either the base or posttrained model."""
     if pretraining_checkpoint:
-        base_model = TransformerLM(
-            GPTConfig.vocab_size,
-            GPTConfig.context_length,
-            GPTConfig.num_layers,
-            GPTConfig.d_model,
-            GPTConfig.num_heads,
-            GPTConfig.d_ff,
-            GPTConfig.theta,
-            GPTConfig.device,
+        model = _build_hf_model(
+            _load_pretraining_model(
+                repo_id=pretraining_repo_id,
+                checkpoint_pattern=pretraining_checkpoint_pattern,
+                checkpoint_path=pretraining_checkpoint_path,
+                local_dir=pretraining_local_dir,
+            )
         )
-
-        # Download pretraining checkpoint
-        snapshot_download(
-            "itskoma/GPT2.5",
-            allow_patterns="pretraining_checkpoint/*",
-            repo_type="model",
-            local_dir="checkpoints",
-        )
-        # Load state dict to the model
-        load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
-
-        # Model
-        model = HFTransformerLM(MyConfig())
-        model.model.load_state_dict(base_model.state_dict())
     else:
-        model = HFTransformerLM.from_pretrained("checkpoints/posttraining_checkpoint")
+        model = HFTransformerLM.from_pretrained(posttraining_checkpoint_path)
 
     device = GPTConfig.device
     model.to(device)
@@ -251,8 +283,8 @@ def inference_test(prompt=None, pretraining_checkpoint=True):
         device=model.device,
     )
 
-    for s in seqs:
-        print(s)
+    for sequence in seqs:
+        print(sequence)
 
 
 @dataclass
@@ -265,100 +297,57 @@ class CustomCollatorWithPadding(DataCollatorWithPadding):
 
     def pad_batch(self, batch):
         max_length = max(len(sample["input_ids"]) for sample in batch)
-
-        for sample in batch:
-            pad_amount = max_length - len(sample["input_ids"])
-            sample["input_ids"] = (
-                sample["input_ids"] + [self.tokenizer.pad_token_id] * pad_amount
-            )
-            sample["labels"] = sample["labels"] + [-100] * pad_amount
-            sample["attention_mask"] = sample["attention_mask"] + [0] * pad_amount
-
+        # Keep label padding aligned with the model's ignore_index=-100 loss masking.
+        padded_batch = [pad_sample(sample, max_length, self.tokenizer) for sample in batch]
         return {
-            "input_ids": torch.tensor([sample["input_ids"] for sample in batch]),
-            "labels": torch.tensor([sample["labels"] for sample in batch]),
-            "attention_mask": torch.tensor(
-                [sample["attention_mask"] for sample in batch]
-            ),
+            "input_ids": torch.tensor([sample["input_ids"] for sample in padded_batch]),
+            "labels": torch.tensor([sample["labels"] for sample in padded_batch]),
+            "attention_mask": torch.tensor([sample["attention_mask"] for sample in padded_batch]),
         }
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
-        # Pad input_ids
         return self.pad_batch(features)
 
 
-def main():
-    # Track with wandb
+def main(
+    pretraining_repo_id: str = DEFAULT_PRETRAINING_REPO_ID,
+    pretraining_checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
+    pretraining_checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
+    pretraining_local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
+    posttraining_checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+    dataset_id: str = DEFAULT_DOLLY_DATASET_ID,
+    dataset_split: str = DEFAULT_DOLLY_SPLIT,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+):
+    """Fine-tune the pretrained base model on the configured instruction dataset."""
     wandb.init(project="gpt-2.5")
 
-    base_model = TransformerLM(
-        GPTConfig.vocab_size,
-        GPTConfig.context_length,
-        GPTConfig.num_layers,
-        GPTConfig.d_model,
-        GPTConfig.num_heads,
-        GPTConfig.d_ff,
-        GPTConfig.theta,
-        GPTConfig.device,
+    base_model = _load_pretraining_model(
+        repo_id=pretraining_repo_id,
+        checkpoint_pattern=pretraining_checkpoint_pattern,
+        checkpoint_path=pretraining_checkpoint_path,
+        local_dir=pretraining_local_dir,
     )
-
-    # Download pretraining checkpoint
-    snapshot_download(
-        "itskoma/GPT2.5",
-        allow_patterns="pretraining_checkpoint/*",
-        repo_type="model",
-        local_dir="checkpoints",
-    )
-    # Load state dict to the model
-    load_checkpoint("checkpoints/pretraining_checkpoint/", base_model)
-    # Load the dataset for instruction tuning
-    # dataset = load_dataset("Cleanlab/databricks-dolly-15k-cleaned", split="train")
-    dataset = load_dataset("yahma/alpaca-cleaned", split="train")
-    # Perform stratified split
-    # dataset = dataset.class_encode_column("category").train_test_split(
-    # test_size=0.1,
-    # stratify_by_column='category',
-    # seed=42)
-
-    dataset = dataset.train_test_split(test_size=0.1, seed=42)
-
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     tokenizer.pad_token = tokenizer.eos_token
-
-    dataset = dataset.map(
-        tokenize,
-        batched=True,
-        fn_kwargs={"tokenizer": tokenizer},
-        remove_columns=dataset["train"].column_names,
+    dataset = _load_instruction_dataset(
+        tokenizer,
+        dataset_id=dataset_id,
+        split=dataset_split,
     )
-    # Pad dataset
-    # dataset = pad_dataset(dataset, tokenizer)
     data_collator = CustomCollatorWithPadding(tokenizer)
-
-    # Slice for faster testing iteration
-    # dataset["train"] = dataset["train"].select(range(10))
-    # dataset["test"] = dataset["test"].select(range(10))
-
-    # Model
-    config = MyConfig()
-    model = HFTransformerLM(config)
-    model.model.load_state_dict(base_model.state_dict())
-    model.tie_weights()
-    BATCH_SIZE = 4
+    model = _build_hf_model(base_model)
 
     training_args = TrainingArguments(
         eval_strategy="epoch",
         include_for_metrics=["loss"],
         logging_steps=100,
         report_to="wandb",
-        per_device_train_batch_size=BATCH_SIZE,
-        per_device_eval_batch_size=BATCH_SIZE,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
         prediction_loss_only=True,
         num_train_epochs=3,
-        gradient_accumulation_steps=2,
         learning_rate=1e-5,
-        # lr_scheduler_type="cosine",
-        # warmup_steps=0.05,
     )
 
     trainer = Trainer(
@@ -370,10 +359,8 @@ def main():
         data_collator=data_collator,
     )
     trainer.train()
-    trainer.save_model("checkpoints/posttraining_checkpoint")
+    trainer.save_model(posttraining_checkpoint_path)
 
 
 if __name__ == "__main__":
-    # inference_test(prompt="The capital of Germany is ", pretraining_checkpoint=True)
     main()
-    # inference_test(prompt="2+2 is ", pretraining_checkpoint=False)
