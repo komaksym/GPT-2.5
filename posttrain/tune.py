@@ -10,8 +10,9 @@ from huggingface_hub import snapshot_download
 from pretrain.model import (
     GPTConfig,
     TransformerLM,
-    generate as pretrain_generate,
     load_checkpoint,
+    softmax,
+    top_p_sampling,
 )
 from transformers import (
     AutoTokenizer,
@@ -24,6 +25,8 @@ from transformers import (
 )
 from transformers.modeling_outputs import CausalLMOutput
 from transformers.utils import PaddingStrategy
+import tiktoken
+
 
 DEFAULT_PRETRAINING_REPO_ID = "itskoma/GPT2.5"
 DEFAULT_PRETRAINING_CHECKPOINT_PATTERN = "pretraining_checkpoint/*"
@@ -32,6 +35,7 @@ DEFAULT_PRETRAINING_LOCAL_DIR = "checkpoints"
 DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint"
 DEFAULT_DATASET_ID = "Cleanlab/databricks-dolly-15k-cleaned"
 DEFAULT_BATCH_SIZE = 8
+ENCODER = tiktoken.get_encoding("gpt2")
 
 
 def format_prompt(instruction, context):
@@ -221,36 +225,101 @@ def _load_instruction_dataset(
 @torch.inference_mode()
 def generate(
     prompt: str,
-    max_tokens: int,
+    max_new_tokens: int,
     context_length: int,
-    batch_size: int,
+    model: HFTransformerLM,
+    encoder=ENCODER,
+    temp: float = 0.9,
+    top_p: float = 0.8,
+    device: torch.device = None,
+) -> list[str]:
+    """
+    Main generation loop for the posttraining LLM.
+    prompt: starting text
+    max_new_tokens: number of tokens to generate per sequence
+    context_length: maximum window size the model can handle
+    model: the transformer model
+    temp: softmax temperature
+    top_p: nucleus sampling threshold
+    """
+    stop_words = ["<|endoftext|>", "Instruction:\n"]
+    response = []
+
+    # Encode prompt and move to device
+    inputs = torch.tensor(encoder.encode(prompt), device=device).unsqueeze(0)
+    for _ in range(max_new_tokens):
+        # Truncate sequence if it exceeds the model's maximum context length
+        if inputs.shape[-1] > context_length:
+            inputs = inputs[:, -context_length:]
+        # Generate next token logits using autocast for speed/memory efficiency
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            logits, _ = model(inputs)
+        # Apply temperature and top-p sampling on the last token's logits
+        probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
+        next_token = top_p_sampling(probs, p=top_p)
+        # Append token to sequence
+        inputs = torch.cat((inputs, next_token), dim=1)
+        response.append(next_token.item())
+        # Stop if the end-of-text special token is generated
+        if encoder.decode([next_token.item()]) in stop_words:
+            break
+
+    return encoder.decode(response) + "\n"
+
+
+def chat(
     model,
-    temp: float,
-    top_p: float,
-    device: torch.device,
+    encoder=ENCODER,
+    context_length: int = 1024,
+    max_new_tokens: int = 128,
+    temp: float = 0.9,
+    top_p: float = 0.8,
+    device: torch.device = None,
 ) -> list[str]:
     """Accept either the HF wrapper or the raw model and delegate generation."""
-    model.eval()
-    return pretrain_generate(
-        prompt=prompt,
-        max_tokens=max_tokens,
-        context_length=context_length,
-        batch_size=batch_size,
-        model=getattr(model, "model", model),
-        temp=temp,
-        top_p=top_p,
-        device=device,
+    assert max_new_tokens < context_length, (
+        "Number of new generated tokens should be < context_length"
     )
+
+    model.eval()
+    waiting_for_response_schema = "\n-----------------Responding...-----------------\n"
+    stop_word = "e"
+    keep_running = True
+    context = ""
+
+    while keep_running:
+        # Capture user input
+        user_input = input(f"Ask anything. To end, type {stop_word}")
+        if user_input == stop_word:
+            break
+        # Printing input
+        print(user_input + waiting_for_response_schema)
+        # Build a prompt by following a schema
+        prompt = f"Instruction:\n{user_input}\nResponse:\n"
+        # Add the prompt to the conversation context
+        context += prompt
+        # Generate response to the context + prompt and update the context
+        response = generate(
+            context, max_new_tokens, context_length, model, encoder, temp, top_p, device
+        )
+        print(response, end="\n" * 2)
+        # Update context by appending response
+        context += response
 
 
 def inference_test(
-    prompt=None,
     pretraining_checkpoint=True,
     pretraining_repo_id: str = DEFAULT_PRETRAINING_REPO_ID,
     pretraining_checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
     pretraining_checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
     pretraining_local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
     posttraining_checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+    encoder=ENCODER,
+    context_length=GPTConfig.context_length,
+    max_new_tokens: int = 128,
+    temp: float = 0.9,
+    top_p: float = 0.8,
+    device=None,
 ):
     """Run a quick generation smoke test from either the base or posttrained model."""
     if pretraining_checkpoint:
@@ -268,19 +337,15 @@ def inference_test(
     device = GPTConfig.device
     model.to(device)
 
-    seqs = generate(
-        prompt=prompt,
-        max_tokens=50,
-        context_length=GPTConfig.context_length,
-        batch_size=5,
-        model=model,
-        temp=0.9,
-        top_p=0.8,
-        device=model.device,
+    chat(
+        model,
+        encoder,
+        context_length=context_length,
+        max_new_tokens=max_new_tokens,
+        temp=temp,
+        top_p=top_p,
+        device=device,
     )
-
-    for sequence in seqs:
-        print(sequence)
 
 
 @dataclass
