@@ -24,3 +24,8 @@ dependencies = [
     "transformers>=5.2.0",
     "wandb>=0.23.1",
 ]
+
+[tool.setuptools.packages.find]
+include = ["posttrain*", "pretrain*", "tokenizer*"]
+exclude = ["checkpoints*", "data*", "dist*", "tests*", "trainer_output*", "wandb*"]
+namespaces = true
