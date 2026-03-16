@@ -44,6 +44,32 @@ def test_hf_wrapper_restores_tied_embedding_hooks(monkeypatch):
     assert model.get_output_embeddings().weight is model.get_input_embeddings().weight
 
 
+def test_hf_wrapper_resizes_token_embeddings_and_reties_output_head():
+    model = posttrain_model.HFTransformerLM(
+        posttrain_model.MyConfig(
+            vocab_size=4,
+            context_length=8,
+            num_layers=1,
+            num_heads=1,
+            d_model=8,
+            d_ff=64,
+            device="cpu",
+        )
+    )
+
+    old_weight = model.get_input_embeddings().weight.detach().clone()
+
+    resized = model.resize_token_embeddings(6)
+
+    assert type(resized) is type(model.get_input_embeddings())
+    assert resized.weight.shape == (6, 8)
+    torch.testing.assert_close(resized.weight[:4], old_weight)
+    torch.testing.assert_close(resized.weight[4:], old_weight.mean(dim=0).expand(2, -1))
+    assert model.get_output_embeddings().weight is model.get_input_embeddings().weight
+    assert model.config.vocab_size == 6
+    assert model.vocab_size == 6
+
+
 def test_load_pretraining_model_uses_override_paths(monkeypatch):
     snapshot_calls = []
     load_calls = []
