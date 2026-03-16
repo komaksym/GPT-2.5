@@ -7,7 +7,7 @@ from pretrain.model import GPTConfig
 from transformers import DataCollatorWithPadding, PreTrainedTokenizerBase
 from transformers.utils import PaddingStrategy
 
-DEFAULT_DATASET_ID = "Cleanlab/databricks-dolly-15k-cleaned"
+DEFAULT_DATASET_ID = "HuggingFaceTB/smol-smoltalk"
 
 
 def format_prompt(instruction, context):
@@ -51,16 +51,6 @@ def pad_sample(sample, max_length, tokenizer):
         "labels": sample["labels"] + [-100] * pad_amount,
         "attention_mask": sample["attention_mask"] + [0] * pad_amount,
     }
-
-
-def pad_dataset(dataset, tokenizer):
-    for split in dataset:
-        max_length = max(len(sample) for sample in dataset[split]["input_ids"])
-        dataset[split] = dataset[split].map(
-            pad_sample,
-            fn_kwargs={"max_length": max_length, "tokenizer": tokenizer},
-        )
-    return dataset
 
 
 @dataclass

@@ -6,7 +6,6 @@ from posttrain.data import (
     CustomCollatorWithPadding,
     _load_instruction_dataset,
     format_prompt,
-    pad_dataset,
     pad_sample,
     tokenize,
 )
@@ -46,7 +45,6 @@ __all__ = [
     "format_prompt",
     "tokenize",
     "pad_sample",
-    "pad_dataset",
     "CustomCollatorWithPadding",
     "_load_instruction_dataset",
     "compute_metrics",
