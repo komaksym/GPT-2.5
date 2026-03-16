@@ -21,8 +21,10 @@ from posttrain.model import (
     _load_pretraining_model,
 )
 from pretrain.model import GPTConfig, softmax, top_p_sampling
-from transformers import AutoTokenizer, Trainer, TrainingArguments
+from transformers import AutoTokenizer
 import tiktoken
+from datasets import load_dataset
+from trl import SFTTrainer, SFTConfig
 
 
 DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint"
@@ -238,17 +240,14 @@ def main(
         checkpoint_path=pretraining_checkpoint_path,
         local_dir=pretraining_local_dir,
     )
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    tokenizer.pad_token = tokenizer.eos_token
-    dataset = _load_instruction_dataset(
-        tokenizer,
-        dataset_id=dataset_id,
-        split=dataset_split,
-    )
-    data_collator = CustomCollatorWithPadding(tokenizer)
     model = _build_hf_model(base_model)
 
-    training_args = TrainingArguments(
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer.pad_token = tokenizer.eos_token
+    dataset = load_dataset(dataset_id)
+    # data_collator = CustomCollatorWithPadding(tokenizer)
+
+    trainer_args = SFTConfig(
         eval_strategy="epoch",
         include_for_metrics=["loss"],
         logging_steps=100,
@@ -258,15 +257,17 @@ def main(
         prediction_loss_only=True,
         num_train_epochs=3,
         learning_rate=1e-5,
+        assistant_only_loss=True,
+        packing=True,
     )
 
-    trainer = Trainer(
+    trainer = SFTTrainer(
         model=model,
-        args=training_args,
+        args=trainer_args,
+        preprocessing_class=tokenizer,
         train_dataset=dataset["train"],
         eval_dataset=dataset["test"],
         compute_metrics=compute_metrics,
-        data_collator=data_collator,
     )
     trainer.train()
     trainer.save_model(posttraining_checkpoint_path)

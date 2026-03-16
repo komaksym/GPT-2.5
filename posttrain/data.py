@@ -2,8 +2,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
-from datasets import load_dataset
-from pretrain.model import GPTConfig
 from transformers import DataCollatorWithPadding, PreTrainedTokenizerBase
 from transformers.utils import PaddingStrategy
 
@@ -19,29 +17,28 @@ def format_prompt(instruction, context):
     return f"Instruction:\n{instruction}\nResponse:\n"
 
 
-def tokenize(examples, tokenizer):
-    inputs = []
-    targets = []
-    attention_masks = []
-
-    for instruction, context, response in zip(
-        examples["instruction"], examples["context"], examples["response"]
-    ):
-        prompt = format_prompt(instruction, context)
-        prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
-        response_ids = tokenizer(response, add_special_tokens=False)["input_ids"]
-        input_ids = prompt_ids + response_ids + [tokenizer.eos_token_id]
-
-        if len(input_ids) > GPTConfig.context_length:
-            continue
-
-        inputs.append(input_ids)
-        targets.append(
-            [-100] * len(prompt_ids) + response_ids + [tokenizer.eos_token_id]
-        )
-        attention_masks.append([1] * len(input_ids))
-
-    return {"input_ids": inputs, "labels": targets, "attention_mask": attention_masks}
+# def tokenize(examples, tokenizer):
+#    inputs = []
+#    targets = []
+#    attention_masks = []
+#
+#    for message in examples["messages"]:
+#        prompt = format_prompt(message)
+#
+#        prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+#        response_ids = tokenizer(response, add_special_tokens=False)["input_ids"]
+#        input_ids = prompt_ids + response_ids + [tokenizer.eos_token_id]
+#
+#        if len(input_ids) > GPTConfig.context_length:
+#            continue
+#
+#        inputs.append(input_ids)
+#        targets.append(
+#            [-100] * len(prompt_ids) + response_ids + [tokenizer.eos_token_id]
+#        )
+#        attention_masks.append([1] * len(input_ids))
+#
+#    return {"input_ids": inputs, "labels": targets, "attention_mask": attention_masks}
 
 
 def pad_sample(sample, max_length, tokenizer):
@@ -82,18 +79,16 @@ class CustomCollatorWithPadding(DataCollatorWithPadding):
 def _load_instruction_dataset(
     tokenizer,
     dataset_id: str = DEFAULT_DATASET_ID,
-    split: str = "train",
+    split: str = None,
 ):
     """Load, stratify, and tokenize the instruction-tuning dataset."""
-    dataset = load_dataset(dataset_id, split=split)
-    dataset = dataset.class_encode_column("category").train_test_split(
-        test_size=0.1,
-        stratify_by_column="category",
-        seed=42,
-    )
-    return dataset.map(
-        tokenize,
-        batched=True,
-        fn_kwargs={"tokenizer": tokenizer},
-        remove_columns=dataset["train"].column_names,
-    )
+    pass
+    # dataset = load_dataset(dataset_id, split=split)
+
+
+#    return dataset.map(
+#        tokenize,
+#        batched=True,
+#        fn_kwargs={"tokenizer": tokenizer},
+#        remove_columns=dataset["train"].column_names,
+#    )
