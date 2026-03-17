@@ -40,6 +40,9 @@ class MyConfig(PretrainedConfig):
 class HFTransformerLM(PreTrainedModel):
     config_class = MyConfig
     _tied_weights_keys = {"model.linear.weight": "model.emb.weight"}
+    _supports_flash_attn = True
+    _supports_flash_attn_2 = True
+    _supports_sdpa = True
 
     def __init__(self, config):
         """Expose TransformerLM through the minimal HF interface used by Trainer."""
@@ -54,7 +57,14 @@ class HFTransformerLM(PreTrainedModel):
             config.theta,
             config.device,
         )
+        self._sync_attn_implementation()
         self.post_init()
+
+    def _get_runtime_attn_implementation(self) -> str:
+        return self.config._attn_implementation.removeprefix("paged|")
+
+    def _sync_attn_implementation(self) -> None:
+        self.model.set_attn_implementation(self._get_runtime_attn_implementation())
 
     def get_input_embeddings(self):
         return self.model.emb
@@ -68,8 +78,24 @@ class HFTransformerLM(PreTrainedModel):
     def set_output_embeddings(self, new_embeddings):
         self.model.linear = new_embeddings
 
-    def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
-        logits, _ = self.model(input_ids, attention_mask=attention_mask)
+    def set_attn_implementation(self, attn_implementation: str | dict):
+        super().set_attn_implementation(attn_implementation)
+        self._sync_attn_implementation()
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        position_ids=None,
+        labels=None,
+        **kwargs,
+    ):
+        self._sync_attn_implementation()
+        logits, _ = self.model(
+            input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+        )
 
         loss = None
         if labels is not None:

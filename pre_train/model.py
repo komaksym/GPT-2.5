@@ -2,18 +2,20 @@ import math
 import os
 import typing
 from collections.abc import Callable
+from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Optional
 
 import numpy as np
 import tiktoken
 import torch
+import torch.distributed.checkpoint as dcp
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, reduce
 from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
 from torch.distributed.checkpoint.stateful import Stateful
-import torch.distributed.checkpoint as dcp
-from dataclasses import dataclass
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 
 GPT_INIT_STD = 0.02
 
@@ -281,6 +283,57 @@ def scaled_dot_prod_attn(
     return torch.einsum("b...qk,b...kd->b...qd", scores, V)
 
 
+def eager_attention_forward(
+    module: nn.Module,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    scaling: float,
+    **kwargs,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    attn_weights = torch.matmul(query, key.transpose(2, 3)) * scaling
+    if attention_mask is not None:
+        attn_weights = attn_weights.masked_fill(
+            ~attention_mask, torch.finfo(attn_weights.dtype).min
+        )
+
+    attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+    attn_output = torch.matmul(attn_weights, value).transpose(1, 2).contiguous()
+    return attn_output, attn_weights
+
+
+def positions_are_packed(position_ids: torch.Tensor | None) -> bool:
+    if position_ids is None or position_ids.size(-1) <= 1:
+        return False
+    return bool((position_ids[..., 1:] <= position_ids[..., :-1]).any())
+
+
+def build_attention_mask(
+    seq_len: int,
+    device: torch.device,
+    attention_mask: torch.Tensor | None = None,
+    position_ids: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+    has_packed_boundaries = positions_are_packed(position_ids)
+    if attention_mask is None and not has_packed_boundaries:
+        return None
+
+    causal_mask = torch.ones(seq_len, seq_len, device=device, dtype=torch.bool).tril()
+    combined_mask = causal_mask.unsqueeze(0)
+
+    if has_packed_boundaries:
+        segment_ids = (position_ids == 0).to(torch.int64).cumsum(dim=-1) - 1
+        same_segment = segment_ids[:, :, None] == segment_ids[:, None, :]
+        combined_mask = combined_mask & same_segment
+
+    if attention_mask is not None:
+        key_padding_mask = attention_mask[:, None, :].bool()
+        combined_mask = combined_mask & key_padding_mask
+
+    return combined_mask.unsqueeze(1)
+
+
 class MultiheadSelfAttention(nn.Module):
     """
     Multi-Head Self-Attention (MHSA) layer with optional RoPE positional encoding.
@@ -300,6 +353,8 @@ class MultiheadSelfAttention(nn.Module):
 
         self.d_k = d_model // num_heads
         self.num_heads = num_heads
+        self.is_causal = True
+        self.config = SimpleNamespace(_attn_implementation="sdpa")
 
         # Projections for Q, K, V and Output
         self.Wq = Linear(d_model, d_model, device=device)
@@ -312,8 +367,18 @@ class MultiheadSelfAttention(nn.Module):
         if theta is not None and max_seq_len is not None:
             self.rope = RoPE(theta, self.d_k, max_seq_len, device)
 
+    @property
+    def attn_implementation(self) -> str:
+        return self.config._attn_implementation
+
+    def set_attn_implementation(self, attn_implementation: str) -> None:
+        self.config._attn_implementation = attn_implementation.removeprefix("paged|")
+
     def forward(
-        self, x: torch.Tensor, token_positions: torch.Tensor = None, attention_mask=None
+        self,
+        x: torch.Tensor,
+        token_positions: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # x: (B, T, d_model)
         Q = self.Wq(x)
@@ -332,27 +397,45 @@ class MultiheadSelfAttention(nn.Module):
 
         # Apply RoPE if initialized
         if self.rope:
-            # Rotate Q and K
             if token_positions is None:
                 token_positions = torch.arange(seq_len, device=x.device).unsqueeze(0)
 
             Q = self.rope(Q, token_positions)
             K = self.rope(K, token_positions)
 
-        # Combining causal and attn masks
-        causal_mask = torch.ones(T, T, device=x.device, dtype=torch.bool).tril()
-        causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
+        attention_impl = self.attn_implementation
+        attention_interface = ALL_ATTENTION_FUNCTIONS.get_interface(
+            attention_impl, eager_attention_forward
+        )
+        packed_mask = build_attention_mask(
+            T,
+            x.device,
+            attention_mask=attention_mask,
+            position_ids=token_positions,
+        )
 
-        if attention_mask is not None:
-            key_padding_mask = attention_mask[:, None, None, :].bool()
-            combined_mask = causal_mask & key_padding_mask
+        if attention_impl == "flash_attention_2":
+            out, _ = attention_interface(
+                self,
+                Q,
+                K,
+                V,
+                attention_mask=attention_mask,
+                scaling=self.d_k**-0.5,
+                position_ids=token_positions,
+            )
         else:
-            combined_mask = causal_mask
-        # Compute Scaled Dot Product Attention with causal and padding (attention) mask
-        out = F.scaled_dot_product_attention(Q, K, V, attn_mask=combined_mask)
+            out, _ = attention_interface(
+                self,
+                Q,
+                K,
+                V,
+                attention_mask=packed_mask,
+                scaling=self.d_k**-0.5,
+            )
 
-        # Concatenate heads: (B, num_heads, T, d_k) -> (B, T, d_model)
-        out = rearrange(out, "b h t d -> b t (h d)")
+        # Concatenate heads: (B, T, num_heads, d_k) -> (B, T, d_model)
+        out = rearrange(out, "b t h d -> b t (h d)")
         # Final linear projection
         return self.Wo(out)
 
@@ -381,9 +464,21 @@ class TransformerBlock(nn.Module):
         )
         self.ffn = SwiGLU(d_model, d_ff, device=device)
 
-    def forward(self, x: torch.Tensor, attention_mask=None) -> torch.Tensor:
+    def set_attn_implementation(self, attn_implementation: str) -> None:
+        self.mhsa.set_attn_implementation(attn_implementation)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         # Pre-Norm + Self-Attention + Residual connection
-        attn = x + self.mhsa(self.norm_att(x), attention_mask=attention_mask)
+        attn = x + self.mhsa(
+            self.norm_att(x),
+            token_positions=position_ids,
+            attention_mask=attention_mask,
+        )
         # Pre-Norm + Feed-Forward + Residual connection
         ffwd = attn + self.ffn(self.norm_ff(attn))
         return ffwd
@@ -422,11 +517,16 @@ class TransformerLM(nn.Module):
         # Tie output head to token embeddings
         self.linear.weight = self.emb.weight
 
+    def set_attn_implementation(self, attn_implementation: str) -> None:
+        for tblock in self.tblocks:
+            tblock.set_attn_implementation(attn_implementation)
+
     def forward(
         self,
         x: torch.Tensor,
         targets: Optional[torch.Tensor] = None,
-        attention_mask=None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Input: x (token IDs) shape (B, T)
@@ -438,7 +538,7 @@ class TransformerLM(nn.Module):
 
         # Pass embedding through N transformer blocks
         for tblock in self.tblocks:
-            emb = tblock(emb, attention_mask)
+            emb = tblock(emb, attention_mask=attention_mask, position_ids=position_ids)
 
         # Final RMS Normalization
         normed = self.norm(emb)
