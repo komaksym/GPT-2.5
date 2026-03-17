@@ -28,6 +28,7 @@ from trl import SFTTrainer, SFTConfig
 
 DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint"
 DEFAULT_BATCH_SIZE = 1
+PACKING = True
 ENCODER = tiktoken.get_encoding("gpt2")
 __all__ = [
     "DEFAULT_PRETRAINING_REPO_ID",
@@ -251,7 +252,7 @@ def main(
     pretraining_local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
     posttraining_checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
     dataset_id: str = DEFAULT_DATASET_ID,
-    dataset_split: str = "train",
+    dataset_split: str = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ):
     """Fine-tune the pretrained base model on the configured instruction dataset."""
@@ -264,11 +265,14 @@ def main(
         local_dir=pretraining_local_dir,
     )
     model = _build_hf_model(base_model)
+    if PACKING:
+        assert torch.backends.cuda.flash_sdp_enabled()
+        model.set_attn_implementation("flash_attention_2")
 
     tokenizer = get_tokenizer(tokenizer_path="gpt2")
     model.resize_token_embeddings(len(tokenizer))
 
-    dataset = load_dataset(dataset_id)
+    dataset = load_dataset(dataset_id, dataset_split=dataset_split)
     # data_collator = CustomCollatorWithPadding(tokenizer)
 
     trainer_args = SFTConfig(
@@ -282,13 +286,13 @@ def main(
         num_train_epochs=3,
         learning_rate=1e-5,
         assistant_only_loss=True,
-        packing=True,
+        packing=PACKING,
     )
 
     trainer = SFTTrainer(
         model=model,
         args=trainer_args,
-        preprocessing_class=tokenizer,
+        processing_class=tokenizer,
         train_dataset=dataset["train"],
         eval_dataset=dataset["test"],
         compute_metrics=compute_metrics,

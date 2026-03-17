@@ -4,6 +4,7 @@ from pre_train.model import GPTConfig, TransformerLM, load_checkpoint
 from transformers import PreTrainedModel, PretrainedConfig
 from transformers.modeling_outputs import CausalLMOutput
 
+
 DEFAULT_PRETRAINING_REPO_ID = "itskoma/GPT2.5"
 DEFAULT_PRETRAINING_CHECKPOINT_PATTERN = "pretraining_checkpoint/*"
 DEFAULT_PRETRAINING_CHECKPOINT_PATH = "checkpoints/pretraining_checkpoint/"
