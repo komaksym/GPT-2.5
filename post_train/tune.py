@@ -27,7 +27,7 @@ from wandb.errors import CommError, UsageError
 
 DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint"
 DEFAULT_DATASET_ID = "HuggingFaceTB/smol-smoltalk"
-DEFAULT_BATCH_SIZE = 8
+DEFAULT_BATCH_SIZE = 16
 PACKING = True
 ENCODER = tiktoken.get_encoding("gpt2")
 __all__ = [
@@ -141,7 +141,7 @@ def generate(
             if inputs.shape[-1] > context_length:
                 inputs = inputs[:, -context_length:]
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                logits, _ = model(inputs)
+                logits = model(inputs).logits
             probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
             next_token = top_p_sampling(probs, p=top_p)
             inputs = torch.cat((inputs, next_token), dim=1)
@@ -174,7 +174,8 @@ def chat(
     context = ""
 
     while True:
-        user_input = input(f"Ask anything. To end, type {stop_word}")
+        print(f"Ask anything. To end, type {stop_word}")
+        user_input = input()
         if user_input == stop_word:
             break
         print(user_input + waiting_for_response_schema)
@@ -256,6 +257,7 @@ def inference_test(
         model = HFTransformerLM.from_pretrained(posttraining_checkpoint_path)
 
     device = GPTConfig.device if device is None else device
+    model.tie_weights()
     model.to(device)
     model.eval()
 
@@ -321,15 +323,16 @@ def main(
 
     tokenizer = get_tokenizer(tokenizer_path="gpt2")
     model.resize_token_embeddings(len(tokenizer))
+    model.tie_weights()
 
     dataset = load_dataset(dataset_id, dataset_split=dataset_split)
-    # data_collator = CustomCollatorWithPadding(tokenizer)
 
     trainer_args = SFTConfig(
         eval_strategy="epoch",
         gradient_checkpointing=False,
         include_for_metrics=["loss"],
         logging_steps=100,
+        save_steps=1000,
         report_to=report_to,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
@@ -354,4 +357,6 @@ def main(
 
 
 if __name__ == "__main__":
-    main()
+    #main()
+    inference_test(pretraining_checkpoint=False, 
+                   posttraining_checkpoint_path="checkpoints/posttraining_checkpoint")

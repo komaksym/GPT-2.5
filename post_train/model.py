@@ -27,9 +27,10 @@ class MyConfig(PretrainedConfig):
         d_ff=GPTConfig.d_ff,
         theta=GPTConfig.theta,
         device=str(GPTConfig.device),
+        tie_word_embeddings=True,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(**kwargs, tie_word_embeddings=tie_word_embeddings)
         self.vocab_size = int(vocab_size)
         self.context_length = int(context_length)
         self.num_layers = int(num_layers)
