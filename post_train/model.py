@@ -1,13 +1,17 @@
+import logging
+
 import torch.nn.functional as F
 from huggingface_hub import snapshot_download
-from pretrain.model import GPTConfig, TransformerLM, load_checkpoint
+from pre_train.model import GPTConfig, TransformerLM, load_checkpoint
 from transformers import PreTrainedModel, PretrainedConfig
 from transformers.modeling_outputs import CausalLMOutput
 
-DEFAULT_PRETRAINING_REPO_ID = "itskoma/GPT2.5"
+
+DEFAULT_REPO_ID = "itskoma/GPT2.5"
 DEFAULT_PRETRAINING_CHECKPOINT_PATTERN = "pretraining_checkpoint/*"
 DEFAULT_PRETRAINING_CHECKPOINT_PATH = "checkpoints/pretraining_checkpoint/"
-DEFAULT_PRETRAINING_LOCAL_DIR = "checkpoints"
+DEFAULT_CHECKPOINT_LOCAL_DIR = "checkpoints"
+logger = logging.getLogger(__name__)
 
 
 class MyConfig(PretrainedConfig):
@@ -23,9 +27,10 @@ class MyConfig(PretrainedConfig):
         d_ff=GPTConfig.d_ff,
         theta=GPTConfig.theta,
         device=str(GPTConfig.device),
+        tie_word_embeddings=True,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(**kwargs, tie_word_embeddings=tie_word_embeddings)
         self.vocab_size = int(vocab_size)
         self.context_length = int(context_length)
         self.num_layers = int(num_layers)
@@ -39,6 +44,9 @@ class MyConfig(PretrainedConfig):
 class HFTransformerLM(PreTrainedModel):
     config_class = MyConfig
     _tied_weights_keys = {"model.linear.weight": "model.emb.weight"}
+    _supports_flash_attn = True
+    _supports_flash_attn_2 = True
+    _supports_sdpa = True
 
     def __init__(self, config):
         """Expose TransformerLM through the minimal HF interface used by Trainer."""
@@ -53,7 +61,43 @@ class HFTransformerLM(PreTrainedModel):
             config.theta,
             config.device,
         )
+        self._sync_attn_implementation()
         self.post_init()
+
+    def _check_and_adjust_attn_implementation(
+        self, attn_implementation: str | None, is_init_check: bool = False
+    ) -> str:
+        try:
+            return super()._check_and_adjust_attn_implementation(
+                attn_implementation, is_init_check=is_init_check
+            )
+        except Exception as exc:
+            if attn_implementation is None:
+                raise
+
+            is_paged = attn_implementation.startswith("paged|")
+            requested_implementation = attn_implementation.removeprefix("paged|")
+            if requested_implementation not in {
+                "flash_attention_2",
+                "flash_attention_3",
+            }:
+                raise
+
+            fallback_implementation = "paged|sdpa" if is_paged else "sdpa"
+            logger.warning(
+                "FlashAttention requested but unavailable (%s). Falling back to %s.",
+                exc,
+                fallback_implementation,
+            )
+            return super()._check_and_adjust_attn_implementation(
+                fallback_implementation, is_init_check=is_init_check
+            )
+
+    def _get_runtime_attn_implementation(self) -> str:
+        return self.config._attn_implementation.removeprefix("paged|")
+
+    def _sync_attn_implementation(self) -> None:
+        self.model.set_attn_implementation(self._get_runtime_attn_implementation())
 
     def get_input_embeddings(self):
         return self.model.emb
@@ -61,8 +105,30 @@ class HFTransformerLM(PreTrainedModel):
     def get_output_embeddings(self):
         return self.model.linear
 
-    def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
-        logits, _ = self.model(input_ids, attention_mask=attention_mask)
+    def set_input_embeddings(self, new_embeddings):
+        self.model.emb = new_embeddings
+
+    def set_output_embeddings(self, new_embeddings):
+        self.model.linear = new_embeddings
+
+    def set_attn_implementation(self, attn_implementation: str | dict):
+        super().set_attn_implementation(attn_implementation)
+        self._sync_attn_implementation()
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        position_ids=None,
+        labels=None,
+        **kwargs,
+    ):
+        self._sync_attn_implementation()
+        logits, _ = self.model(
+            input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+        )
 
         loss = None
         if labels is not None:
@@ -92,10 +158,10 @@ def _build_base_model():
 
 
 def _load_pretraining_model(
-    repo_id: str = DEFAULT_PRETRAINING_REPO_ID,
+    repo_id: str = DEFAULT_REPO_ID,
     checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
     checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
-    local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
+    local_dir: str = DEFAULT_CHECKPOINT_LOCAL_DIR,
 ):
     """Download and load a base checkpoint into a fresh TransformerLM."""
     base_model = _build_base_model()

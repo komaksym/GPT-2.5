@@ -1,40 +1,46 @@
+from importlib import import_module
+from importlib.util import find_spec
+import os
+import warnings
+
 import numpy as np
 import torch
 import wandb
-from posttrain.data import (
-    DEFAULT_DATASET_ID,
-    CustomCollatorWithPadding,
-    _load_instruction_dataset,
-    format_prompt,
-    pad_dataset,
-    pad_sample,
-    tokenize,
-)
-from posttrain.model import (
+from post_train.model import (
     DEFAULT_PRETRAINING_CHECKPOINT_PATH,
     DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
-    DEFAULT_PRETRAINING_LOCAL_DIR,
-    DEFAULT_PRETRAINING_REPO_ID,
+    DEFAULT_CHECKPOINT_LOCAL_DIR,
+    DEFAULT_REPO_ID,
     HFTransformerLM,
     MyConfig,
     _build_base_model,
     _build_hf_model,
     _load_pretraining_model,
 )
-from pretrain.model import GPTConfig, softmax, top_p_sampling
-from transformers import AutoTokenizer, Trainer, TrainingArguments
+from pre_train.model import GPTConfig, softmax, top_p_sampling
+from transformers import AutoTokenizer
 import tiktoken
+from datasets import load_dataset
+from huggingface_hub import snapshot_download
+from trl import SFTTrainer, SFTConfig
+from wandb.errors import CommError, UsageError
+import sys
 
 
-DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint"
-DEFAULT_BATCH_SIZE = 8
+
+DEFAULT_POSTTRAINING_REPO_ID = "itskoma/GPT2.5"
+DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN = "posttraining_checkpoint/*"
+DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint/"
+
+DEFAULT_DATASET_ID = "HuggingFaceTB/smol-smoltalk"
+DEFAULT_BATCH_SIZE = 16
+PACKING = True
 ENCODER = tiktoken.get_encoding("gpt2")
 __all__ = [
-    "DEFAULT_PRETRAINING_REPO_ID",
+    "DEFAULT_REPO_ID",
     "DEFAULT_PRETRAINING_CHECKPOINT_PATTERN",
     "DEFAULT_PRETRAINING_CHECKPOINT_PATH",
-    "DEFAULT_PRETRAINING_LOCAL_DIR",
-    "DEFAULT_POSTTRAINING_CHECKPOINT_PATH",
+    "DEFAULT_CHECKPOINT_LOCAL_DIR",
     "DEFAULT_DATASET_ID",
     "DEFAULT_BATCH_SIZE",
     "ENCODER",
@@ -43,16 +49,12 @@ __all__ = [
     "_build_base_model",
     "_load_pretraining_model",
     "_build_hf_model",
-    "format_prompt",
-    "tokenize",
-    "pad_sample",
-    "pad_dataset",
-    "CustomCollatorWithPadding",
-    "_load_instruction_dataset",
     "compute_metrics",
-    "generate",
+    "get_trainer_precision_kwargs",
+    "get_training_dtype",
     "chat",
     "inference_test",
+    "is_flash_attn_2_installed",
     "main",
 ]
 
@@ -60,6 +62,47 @@ __all__ = [
 def compute_metrics(eval_pred):
     mean_loss = float(np.mean(eval_pred.losses))
     return {"perplexity": np.exp(mean_loss)}
+
+
+def is_flash_attn_2_installed() -> bool:
+    if find_spec("flash_attn") is None:
+        return False
+    try:
+        import_module("flash_attn")
+    except Exception:
+        return False
+    return True
+
+
+def get_training_dtype() -> torch.dtype:
+    if not torch.cuda.is_available():
+        return torch.float32
+    if torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
+
+
+def get_trainer_precision_kwargs(dtype: torch.dtype) -> dict[str, bool]:
+    if dtype is torch.bfloat16:
+        return {"bf16": True}
+    if dtype is torch.float16:
+        return {"fp16": True}
+    return {}
+
+
+def configure_packed_attention(model) -> None:
+    if not PACKING:
+        return
+
+    if torch.cuda.is_available() and is_flash_attn_2_installed():
+        assert torch.backends.cuda.flash_sdp_enabled()
+        model.set_attn_implementation("flash_attention_2")
+        return
+
+    warnings.warn(
+        "flash_attn is unavailable for packed training; falling back to SDPA.",
+        stacklevel=2,
+    )
 
 
 @torch.inference_mode()
@@ -102,7 +145,7 @@ def generate(
             if inputs.shape[-1] > context_length:
                 inputs = inputs[:, -context_length:]
             with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                logits, _ = model(inputs)
+                logits = model(inputs).logits
             probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
             next_token = top_p_sampling(probs, p=top_p)
             inputs = torch.cat((inputs, next_token), dim=1)
@@ -130,15 +173,17 @@ def chat(
     )
 
     model.eval()
-    waiting_for_response_schema = "\n-----------------Responding...-----------------\n"
+    waiting_for_response_schema = "\n" + "-" * 30 + "Responding..." + "-" * 30 + "\n"
     stop_word = "e"
     context = ""
 
     while True:
-        user_input = input(f"Ask anything. To end, type {stop_word}")
+        print("#" * 20, f"Ask anything. To end, type {stop_word}", "#" * 20)
+        sys.stdout.write("PROMPT: ")
+        user_input = input()
         if user_input == stop_word:
             break
-        print(user_input + waiting_for_response_schema)
+        print(waiting_for_response_schema)
         prompt = f"Instruction:\n{user_input}\nResponse:\n"
         context += prompt
         response = generate(
@@ -152,7 +197,7 @@ def chat(
             top_p=top_p,
             device=device,
         )[0]
-        print(response, end="\n" * 2)
+        print("RESPONSE: ", response, end="\n" * 2)
         context += response
 
 
@@ -161,14 +206,38 @@ def _print_sequences(sequences: list[str]) -> None:
         print(sequence, end="" if sequence.endswith("\n") else "\n")
 
 
+def get_tokenizer(tokenizer_path="gpt2"):
+    extra_special_tokens = ["<|user|>", "<|assistant|>", "<|system|>"]
+    tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer_path, extra_special_tokens=extra_special_tokens
+    )
+    tokenizer.pad_token = tokenizer.eos_token
+
+    tokenizer.chat_template = (
+        "{% for message in messages %}"
+        "{{ '<|' + message['role'] + '|>\\n' }}"
+        "{% if message['role'] == 'assistant' %}"
+        "{% generation %}"
+        "{{ message['content'] + eos_token + '\\n' }}"
+        "{% endgeneration %}"
+        "{% else %}"
+        "{{ message['content'] + eos_token + '\\n' }}"
+        "{% endif %}"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}"
+        "{{ '<|assistant|>\\n' }}"
+        "{% endif %}"
+    )
+    return tokenizer
+
+
 def inference_test(
     prompt: str | None = None,
     pretraining_checkpoint=True,
-    pretraining_repo_id: str = DEFAULT_PRETRAINING_REPO_ID,
-    pretraining_checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
-    pretraining_checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
-    pretraining_local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
-    posttraining_checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+    repo_id: str = DEFAULT_REPO_ID,
+    checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
+    checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
+    local_dir: str = DEFAULT_CHECKPOINT_LOCAL_DIR,
     encoder=ENCODER,
     context_length=GPTConfig.context_length,
     max_tokens: int = 50,
@@ -180,18 +249,33 @@ def inference_test(
 ):
     """Run a quick generation smoke test from either the base or posttrained model."""
     if pretraining_checkpoint:
+        assert "pretraining" in checkpoint_path, """
+        f"pretraining_checkpoint is set to {pretraining_checkpoint},
+        but checkpoint_path is not for a pretraining checkpoint"""
+
         model = _build_hf_model(
             _load_pretraining_model(
-                repo_id=pretraining_repo_id,
-                checkpoint_pattern=pretraining_checkpoint_pattern,
-                checkpoint_path=pretraining_checkpoint_path,
-                local_dir=pretraining_local_dir,
+                repo_id=repo_id,
+                checkpoint_pattern=checkpoint_pattern,
+                checkpoint_path=checkpoint_path,
+                local_dir=local_dir,
             )
         )
     else:
-        model = HFTransformerLM.from_pretrained(posttraining_checkpoint_path)
+        assert "posttraining" in checkpoint_path, """
+        f"pretraining_checkpoint is set to {pretraining_checkpoint},
+        but checkpoint_path is not path to a posttraining checkpoint"""
+
+        snapshot_download(
+            repo_id,
+            allow_patterns=checkpoint_pattern,
+            repo_type="model",
+            local_dir=local_dir,
+        )
+        model = HFTransformerLM.from_pretrained(checkpoint_path)
 
     device = GPTConfig.device if device is None else device
+    model.tie_weights()
     model.to(device)
     model.eval()
 
@@ -222,57 +306,78 @@ def inference_test(
 
 
 def main(
-    pretraining_repo_id: str = DEFAULT_PRETRAINING_REPO_ID,
+    repo_id: str = DEFAULT_REPO_ID,
     pretraining_checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
     pretraining_checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
-    pretraining_local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
+    pretraining_local_dir: str = DEFAULT_CHECKPOINT_LOCAL_DIR,
     posttraining_checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
     dataset_id: str = DEFAULT_DATASET_ID,
-    dataset_split: str = "train",
+    dataset_split: str = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ):
     """Fine-tune the pretrained base model on the configured instruction dataset."""
-    wandb.init(project="gpt-2.5")
+    rank = int(os.environ.get("RANK", "0"))
+    report_to = "none"
+    if rank == 0:
+        try:
+            wandb.init(project="gpt-2.5")
+            report_to = "wandb"
+        except (CommError, UsageError) as exc:
+            warnings.warn(
+                f"W&B initialization failed; continuing without remote logging: {exc}",
+                stacklevel=2,
+            )
+    training_dtype = get_training_dtype()
 
     base_model = _load_pretraining_model(
-        repo_id=pretraining_repo_id,
+        repo_id=repo_id,
         checkpoint_pattern=pretraining_checkpoint_pattern,
         checkpoint_path=pretraining_checkpoint_path,
         local_dir=pretraining_local_dir,
     )
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
-    tokenizer.pad_token = tokenizer.eos_token
-    dataset = _load_instruction_dataset(
-        tokenizer,
-        dataset_id=dataset_id,
-        split=dataset_split,
-    )
-    data_collator = CustomCollatorWithPadding(tokenizer)
     model = _build_hf_model(base_model)
+    model.config.dtype = training_dtype
+    configure_packed_attention(model)
 
-    training_args = TrainingArguments(
+    tokenizer = get_tokenizer(tokenizer_path="gpt2")
+    model.resize_token_embeddings(len(tokenizer))
+    model.tie_weights()
+
+    dataset = load_dataset(dataset_id, dataset_split=dataset_split)
+
+    trainer_args = SFTConfig(
         eval_strategy="epoch",
+        gradient_checkpointing=False,
         include_for_metrics=["loss"],
         logging_steps=100,
-        report_to="wandb",
+        save_steps=1000,
+        report_to=report_to,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         prediction_loss_only=True,
         num_train_epochs=3,
         learning_rate=1e-5,
+        assistant_only_loss=True,
+        packing=PACKING,
+        **get_trainer_precision_kwargs(training_dtype),
     )
 
-    trainer = Trainer(
+    trainer = SFTTrainer(
         model=model,
-        args=training_args,
+        args=trainer_args,
+        processing_class=tokenizer,
         train_dataset=dataset["train"],
         eval_dataset=dataset["test"],
         compute_metrics=compute_metrics,
-        data_collator=data_collator,
     )
     trainer.train()
     trainer.save_model(posttraining_checkpoint_path)
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    inference_test(
+        pretraining_checkpoint=False,
+        checkpoint_pattern=DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN,
+        checkpoint_path=DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+    )

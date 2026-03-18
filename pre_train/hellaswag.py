@@ -34,7 +34,9 @@ class HellaSwagLoader:
 
         # Tokenize the context and endings
         context_ids = self.tokenizer.encode_batch(context)
-        endings_ids = [self.tokenizer.encode_batch(example_endings) for example_endings in endings]
+        endings_ids = [
+            self.tokenizer.encode_batch(example_endings) for example_endings in endings
+        ]
 
         # Populate contexts with endings
         all_inputs = []
@@ -60,7 +62,9 @@ class HellaSwagLoader:
                 all_masks.append(mask)
 
         # Synchronized padding
-        inputs_padded = pad_sequence(all_inputs, batch_first=True, padding_value=self.eos_token)
+        inputs_padded = pad_sequence(
+            all_inputs, batch_first=True, padding_value=self.eos_token
+        )
         completion_mask = pad_sequence(all_masks, batch_first=True, padding_value=0)
 
         # Convert labels from string to ints
@@ -125,7 +129,9 @@ def compute_hellaswag_stats(
     log_probs = softmax(shift_logits, dim=-1, is_log=True)
 
     # gather expects index to have same dim as input, so unsqueeze -1
-    target_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
+    target_log_probs = log_probs.gather(
+        dim=-1, index=shift_labels.unsqueeze(-1)
+    ).squeeze(-1)
 
     # 4. Apply Masking (The Safe Way)
     masked_log_probs = target_log_probs * shift_mask
@@ -161,7 +167,9 @@ def compute_hellaswag(
     device: torch.device,
 ) -> float:
     model.eval()
-    correct, total = compute_hellaswag_stats(model, inputs, labels, completion_mask, device)
+    correct, total = compute_hellaswag_stats(
+        model, inputs, labels, completion_mask, device
+    )
     model.train()
     return correct / total if total else 0.0
 

@@ -1,6 +1,6 @@
 import torch
 
-from posttrain import data as posttrain_data
+from post_train import data as posttrain_data
 
 
 class DummyTokenizer:

@@ -28,7 +28,7 @@ from .model import (
     fsdp_load_checkpoint,
     fsdp_save_checkpoint,
     is_distributed,
-    GPTConfig
+    GPTConfig,
 )
 
 warnings.filterwarnings("ignore")
@@ -130,7 +130,14 @@ def training_together(
     """
 
     model = TransformerLM(
-        VOCAB_SIZE, context_length, num_layers, d_model, num_heads, d_ff, theta, device=device
+        VOCAB_SIZE,
+        context_length,
+        num_layers,
+        d_model,
+        num_heads,
+        d_ff,
+        theta,
+        device=device,
     )
 
     # Torch compile the model
@@ -156,16 +163,24 @@ def training_together(
         config.betas = betas
         config.eps = eps
         config.weight_decay = weight_decay
-        config.training_set_data_creation_batch_size = TRAINING_SET_DATA_CREATION_BATCH_SIZE
+        config.training_set_data_creation_batch_size = (
+            TRAINING_SET_DATA_CREATION_BATCH_SIZE
+        )
         config.val_set_data_creation_batch_size = VAL_SET_DATA_CREATION_BATCH_SIZE
         config.training_sampled_with_replacement = (
             False if "train_set_loader" and "val_set_loader" in locals() else True
         )
         config.num_gpus = dist.get_world_size()
-        config.total_tokens_processed = (config.batch_size * config.grad_accum_steps 
-                                       * config.context_length * config.num_gpus)
+        config.total_tokens_processed = (
+            config.batch_size
+            * config.grad_accum_steps
+            * config.context_length
+            * config.num_gpus
+        )
         run.watch(model)
-        master_table = wandb.Table(columns=["step", "prediction"], log_mode="INCREMENTAL")
+        master_table = wandb.Table(
+            columns=["step", "prediction"], log_mode="INCREMENTAL"
+        )
 
     # If in distributed mode
     if rank is not None and autowrap_policy and mp_policy:
@@ -178,7 +193,9 @@ def training_together(
         )
 
     # HellaSwag
-    hellaswag_loader = HellaSwagLoader(batch_size, context_length, tiktoken.get_encoding("gpt2"))
+    hellaswag_loader = HellaSwagLoader(
+        batch_size, context_length, tiktoken.get_encoding("gpt2")
+    )
 
     # Warch model with wandb
     optimizer = AdamW(model.parameters(), a_max, betas, eps, weight_decay)
@@ -222,7 +239,9 @@ def training_together(
         else:
             norm = gradient_clipping(model.parameters(), 1.0)
         # Learning rate scheduler
-        lr = learning_rate_schedule(i, a_max, 0.1 * a_max, 0.05 * train_steps, train_steps)
+        lr = learning_rate_schedule(
+            i, a_max, 0.1 * a_max, 0.05 * train_steps, train_steps
+        )
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
         # Step optimizer
@@ -241,7 +260,9 @@ def training_together(
                 f"step {i + 1}, loss: {loss_accum:.3f}, perp: {perplexity:.3f}, norm: {norm:.3f}, dt: {step_time_ms:.3f}, tok/s: {tokens_per_sec:.3f}"
             )
             # Log loss in wandb
-            run.log({"loss": loss_accum, "perplexity": perplexity, "norm": norm, "lr": lr})
+            run.log(
+                {"loss": loss_accum, "perplexity": perplexity, "norm": norm, "lr": lr}
+            )
             # Increment pbar
             pbar.update(1)
 
@@ -266,7 +287,9 @@ def training_together(
                 print(f"HellaSwag results: {hs_score:.4f}")
 
                 # Log to wandb
-                run.log({"generated_sequences": master_table, "HellaSwag score": hs_score})
+                run.log(
+                    {"generated_sequences": master_table, "HellaSwag score": hs_score}
+                )
 
         # Save checkpoint
         if i >= 1000 and i % 1000 == 0:
@@ -296,7 +319,9 @@ def training_together(
         # If about to finish training, delete the mid training checkpoint
         # And save the full training checkpoint
         if i == train_steps - 1:
-            should_save_final_checkpoint = master_rank and loss_accum < last_checkpoint_loss
+            should_save_final_checkpoint = (
+                master_rank and loss_accum < last_checkpoint_loss
+            )
             if dist.is_available() and dist.is_initialized():
                 decision = torch.tensor(
                     int(should_save_final_checkpoint),
@@ -314,7 +339,7 @@ def training_together(
                 folder_name = final_path.split("/")[0]
                 os.makedirs(folder_name, exist_ok=True)
                 # Create a final checkpoint
-                fsdp_save_checkpoint(model, optimizer, i+1, final_path)
+                fsdp_save_checkpoint(model, optimizer, i + 1, final_path)
                 if master_rank:
                     last_checkpoint_loss = loss_accum
                     print("Saved final checkpoint!")
@@ -328,21 +353,33 @@ def training_together(
 def main() -> None:
     """Entry point for the training script. Parses arguments and starts training."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", type=int, help="Batch size for training per GPU")
-    parser.add_argument("--grad_accum_steps", type=int, help="Number of gradient accumulation steps")
-    parser.add_argument("--context_length", type=int, help="Maximum sequence length (context window)")
+    parser.add_argument(
+        "--batch_size", type=int, help="Batch size for training per GPU"
+    )
+    parser.add_argument(
+        "--grad_accum_steps", type=int, help="Number of gradient accumulation steps"
+    )
+    parser.add_argument(
+        "--context_length", type=int, help="Maximum sequence length (context window)"
+    )
     parser.add_argument("--num_layers", type=int, help="Number of transformer layers")
     parser.add_argument("--d_model", type=int, help="Embedding dimension")
     parser.add_argument("--num_heads", type=int, help="Number of attention heads")
     parser.add_argument("--d_ff", type=int, help="Feed-forward network dimension")
-    parser.add_argument("--theta", type=float, help="Base for Rotary Positional Embeddings")
-    parser.add_argument("--train_steps", type=int, help="Total number of training steps")
+    parser.add_argument(
+        "--theta", type=float, help="Base for Rotary Positional Embeddings"
+    )
+    parser.add_argument(
+        "--train_steps", type=int, help="Total number of training steps"
+    )
     parser.add_argument("--lr", type=float, help="Maximum learning rate")
     parser.add_argument("--beta1", type=float, help="AdamW beta1 parameter")
     parser.add_argument("--beta2", type=float, help="AdamW beta2 parameter")
     parser.add_argument("--eps", type=float, help="AdamW epsilon parameter")
     parser.add_argument("--weight_decay", type=float, help="Weight decay for optimizer")
-    parser.add_argument("--checkpoint", type=str, help="Path to checkpoint to resume training from")
+    parser.add_argument(
+        "--checkpoint", type=str, help="Path to checkpoint to resume training from"
+    )
 
     # Parse args from CLI
     args = parser.parse_args()
@@ -368,7 +405,9 @@ def main() -> None:
         )
 
         bf16_ready = (
-            torch.version.cuda and torch.cuda.is_bf16_supported() and dist.is_nccl_available()
+            torch.version.cuda
+            and torch.cuda.is_bf16_supported()
+            and dist.is_nccl_available()
         )
 
         bfSixteen = MixedPrecision(
@@ -385,14 +424,24 @@ def main() -> None:
             mp_policy = None
 
     # Load the data
-    train_data = hf_hub_download(repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_train.bin")
-    val_data = hf_hub_download(repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_test.bin")
+    train_data = hf_hub_download(
+        repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_train.bin"
+    )
+    val_data = hf_hub_download(
+        repo_id="itskoma/GPT2.5", repo_type="dataset", filename="fineweb_test.bin"
+    )
 
     # Create data loaders
-    train_set_loader = DataLoader(train_data, args.batch_size, args.context_length,
-                                  rank=rank, world_size=world_size)
-    val_set_loader = DataLoader(val_data, args.batch_size, args.context_length,
-                                rank=rank, world_size=world_size) 
+    train_set_loader = DataLoader(
+        train_data,
+        args.batch_size,
+        args.context_length,
+        rank=rank,
+        world_size=world_size,
+    )
+    val_set_loader = DataLoader(
+        val_data, args.batch_size, args.context_length, rank=rank, world_size=world_size
+    )
 
     # Start training
     training_together(
