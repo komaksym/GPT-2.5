@@ -177,7 +177,7 @@ def chat(
     context = ""
 
     while True:
-        print(f"Ask anything. To end, type {stop_word}")
+        print("#" * 10, f"Ask anything. To end, type {stop_word}", "#" * 10)
         user_input = input()
         if user_input == stop_word:
             break
