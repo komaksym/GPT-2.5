@@ -26,6 +26,7 @@ from wandb.errors import CommError, UsageError
 
 
 DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint"
+DEFAULT_DATASET_ID = "HuggingFaceTB/smol-smoltalk"
 DEFAULT_BATCH_SIZE = 8
 PACKING = True
 ENCODER = tiktoken.get_encoding("gpt2")
@@ -43,10 +44,6 @@ __all__ = [
     "_build_base_model",
     "_load_pretraining_model",
     "_build_hf_model",
-    "format_prompt",
-    "pad_sample",
-    "CustomCollatorWithPadding",
-    "_load_instruction_dataset",
     "compute_metrics",
     "get_trainer_precision_kwargs",
     "get_training_dtype",
