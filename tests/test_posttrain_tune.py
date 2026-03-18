@@ -157,7 +157,7 @@ def test_main_builds_sft_trainer_and_enables_packed_flash_attention(monkeypatch)
 
     class FakeModel:
         def __init__(self):
-            self.config = SimpleNamespace(dtype=None, _attn_implementation="eager")
+            self.config = SimpleNamespace(dtype=None, _attn_implementation="sdpa")
             self.attn_implementation_calls = []
             self.resized_to = None
 
@@ -228,6 +228,7 @@ def test_main_builds_sft_trainer_and_enables_packed_flash_attention(monkeypatch)
     assert args.include_for_metrics == ["loss"]
     assert args.logging_steps == 100
     assert args.report_to == "wandb"
+    assert args.gradient_checkpointing is False
     assert args.per_device_train_batch_size == 4
     assert args.per_device_eval_batch_size == 4
     assert args.prediction_loss_only is True
@@ -240,17 +241,120 @@ def test_main_builds_sft_trainer_and_enables_packed_flash_attention(monkeypatch)
     assert trainer_calls["save_path"] == "custom/posttrain"
 
 
-def test_main_requires_flash_attn_for_packing(monkeypatch):
+def test_main_falls_back_to_sdpa_when_flash_attn_is_unavailable(monkeypatch):
     class FakeModel:
         def __init__(self):
-            self.config = SimpleNamespace(dtype=None, _attn_implementation="eager")
+            self.config = SimpleNamespace(dtype=None, _attn_implementation="sdpa")
+            self.attn_implementation_calls = []
+            self.resized_to = None
+
+        def set_attn_implementation(self, attn_implementation):
+            self.attn_implementation_calls.append(attn_implementation)
+            self.config._attn_implementation = attn_implementation
+
+        def resize_token_embeddings(self, size):
+            self.resized_to = size
+
+    class FakeTokenizer:
+        eos_token = "<eos>"
+        pad_token = None
+
+        def __len__(self):
+            return 7
+
+    class FakeSFTConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeSFTTrainer:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def train(self):
+            return None
+
+        def save_model(self, path):
+            return None
+
+    fake_model = FakeModel()
+    tokenized_dataset = DummyDatasetDict(train="train-split", test="test-split")
 
     monkeypatch.setattr(tune.wandb, "init", lambda project: None)
     monkeypatch.setattr(tune, "_load_pretraining_model", lambda **kwargs: "base-model")
-    monkeypatch.setattr(tune, "_build_hf_model", lambda base_model: FakeModel())
+    monkeypatch.setattr(tune, "_build_hf_model", lambda base_model: fake_model)
+    monkeypatch.setattr(tune, "get_tokenizer", lambda tokenizer_path="gpt2": FakeTokenizer())
+    monkeypatch.setattr(tune, "load_dataset", lambda *args, **kwargs: tokenized_dataset)
+    monkeypatch.setattr(tune, "SFTConfig", FakeSFTConfig)
+    monkeypatch.setattr(tune, "SFTTrainer", FakeSFTTrainer)
     monkeypatch.setattr(tune, "is_flash_attn_2_installed", lambda: False)
     monkeypatch.setattr(tune.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(tune.torch.cuda, "is_bf16_supported", lambda: True)
 
-    with pytest.raises(ImportError, match="flash_attn"):
+    with pytest.warns(UserWarning, match="falling back to SDPA"):
         tune.main()
+
+    assert fake_model.attn_implementation_calls == []
+    assert fake_model.config._attn_implementation == "sdpa"
+
+
+def test_main_disables_wandb_reporting_when_init_fails(monkeypatch):
+    trainer_calls = {}
+
+    class FakeModel:
+        def __init__(self):
+            self.config = SimpleNamespace(dtype=None, _attn_implementation="sdpa")
+            self.attn_implementation_calls = []
+            self.resized_to = None
+
+        def set_attn_implementation(self, attn_implementation):
+            self.attn_implementation_calls.append(attn_implementation)
+            self.config._attn_implementation = attn_implementation
+
+        def resize_token_embeddings(self, size):
+            self.resized_to = size
+
+    class FakeTokenizer:
+        eos_token = "<eos>"
+        pad_token = None
+
+        def __len__(self):
+            return 7
+
+    class FakeSFTConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeSFTTrainer:
+        def __init__(self, **kwargs):
+            trainer_calls["kwargs"] = kwargs
+
+        def train(self):
+            trainer_calls["trained"] = True
+
+        def save_model(self, path):
+            trainer_calls["save_path"] = path
+
+    fake_model = FakeModel()
+    tokenized_dataset = DummyDatasetDict(train="train-split", test="test-split")
+
+    monkeypatch.setenv("RANK", "0")
+    monkeypatch.setattr(
+        tune.wandb,
+        "init",
+        lambda project: (_ for _ in ()).throw(tune.CommError("user is not logged in")),
+    )
+    monkeypatch.setattr(tune, "_load_pretraining_model", lambda **kwargs: "base-model")
+    monkeypatch.setattr(tune, "_build_hf_model", lambda base_model: fake_model)
+    monkeypatch.setattr(tune, "get_tokenizer", lambda tokenizer_path="gpt2": FakeTokenizer())
+    monkeypatch.setattr(tune, "load_dataset", lambda *args, **kwargs: tokenized_dataset)
+    monkeypatch.setattr(tune, "SFTConfig", FakeSFTConfig)
+    monkeypatch.setattr(tune, "SFTTrainer", FakeSFTTrainer)
+    monkeypatch.setattr(tune, "is_flash_attn_2_installed", lambda: True)
+    monkeypatch.setattr(tune.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(tune.torch.cuda, "is_bf16_supported", lambda: True)
+
+    with pytest.warns(UserWarning, match="W&B initialization failed"):
+        tune.main()
+
+    assert trainer_calls["kwargs"]["args"].report_to == "none"
+    assert trainer_calls["trained"] is True

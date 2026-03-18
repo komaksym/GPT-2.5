@@ -216,6 +216,64 @@ def test_hf_wrapper_set_attn_implementation_syncs_runtime(monkeypatch):
     assert model.model.attn_implementations[-1] == "flash_attention_2"
 
 
+def test_hf_wrapper_falls_back_to_sdpa_when_flash_attention_is_unusable(
+    monkeypatch, caplog
+):
+    class FakeEmbedding(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.randn(1, 1))
+
+    class FakeLinear(torch.nn.Module):
+        def __init__(self, weight):
+            super().__init__()
+            self.weight = weight
+
+    class FakeTransformerLM(torch.nn.Module):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            self.emb = FakeEmbedding()
+            self.linear = FakeLinear(self.emb.weight)
+            self.attn_implementations = []
+
+        def set_attn_implementation(self, attn_implementation):
+            self.attn_implementations.append(attn_implementation)
+
+        def forward(self, input_ids, attention_mask=None, position_ids=None):
+            batch, seq_len = input_ids.shape
+            return torch.zeros(batch, seq_len, 1), None
+
+    def fake_check(self, attn_implementation, is_init_check=False):
+        if attn_implementation == "flash_attention_2":
+            raise ImportError("flash_attn seems to be not installed")
+        return attn_implementation
+
+    monkeypatch.setattr(posttrain_model, "TransformerLM", FakeTransformerLM)
+    monkeypatch.setattr(
+        posttrain_model.PreTrainedModel,
+        "_check_and_adjust_attn_implementation",
+        fake_check,
+    )
+
+    config = posttrain_model.MyConfig(
+        vocab_size=1,
+        context_length=1,
+        num_layers=1,
+        num_heads=1,
+        d_model=1,
+        d_ff=64,
+        device="cpu",
+    )
+    config._attn_implementation_internal = "flash_attention_2"
+
+    with caplog.at_level("WARNING"):
+        model = posttrain_model.HFTransformerLM(config)
+
+    assert model.config._attn_implementation == "sdpa"
+    assert model.model.attn_implementations == ["sdpa"]
+    assert "Falling back to sdpa" in caplog.text
+
+
 def test_load_pretraining_model_uses_override_paths(monkeypatch):
     snapshot_calls = []
     load_calls = []

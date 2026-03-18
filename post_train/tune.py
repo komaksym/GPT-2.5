@@ -1,13 +1,11 @@
+from importlib import import_module
+from importlib.util import find_spec
+import os
+import warnings
+
 import numpy as np
 import torch
 import wandb
-from post_train.data import (
-    DEFAULT_DATASET_ID,
-    CustomCollatorWithPadding,
-    _load_instruction_dataset,
-    format_prompt,
-    pad_sample,
-)
 from post_train.model import (
     DEFAULT_PRETRAINING_CHECKPOINT_PATH,
     DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
@@ -24,10 +22,11 @@ from transformers import AutoTokenizer
 import tiktoken
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
+from wandb.errors import CommError, UsageError
 
 
 DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint"
-DEFAULT_BATCH_SIZE = 1
+DEFAULT_BATCH_SIZE = 8
 PACKING = True
 ENCODER = tiktoken.get_encoding("gpt2")
 __all__ = [
@@ -49,9 +48,12 @@ __all__ = [
     "CustomCollatorWithPadding",
     "_load_instruction_dataset",
     "compute_metrics",
+    "get_trainer_precision_kwargs",
+    "get_training_dtype",
     "generate",
     "chat",
     "inference_test",
+    "is_flash_attn_2_installed",
     "main",
 ]
 
@@ -59,6 +61,47 @@ __all__ = [
 def compute_metrics(eval_pred):
     mean_loss = float(np.mean(eval_pred.losses))
     return {"perplexity": np.exp(mean_loss)}
+
+
+def is_flash_attn_2_installed() -> bool:
+    if find_spec("flash_attn") is None:
+        return False
+    try:
+        import_module("flash_attn")
+    except Exception:
+        return False
+    return True
+
+
+def get_training_dtype() -> torch.dtype:
+    if not torch.cuda.is_available():
+        return torch.float32
+    if torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
+
+
+def get_trainer_precision_kwargs(dtype: torch.dtype) -> dict[str, bool]:
+    if dtype is torch.bfloat16:
+        return {"bf16": True}
+    if dtype is torch.float16:
+        return {"fp16": True}
+    return {}
+
+
+def configure_packed_attention(model) -> None:
+    if not PACKING:
+        return
+
+    if torch.cuda.is_available() and is_flash_attn_2_installed():
+        assert torch.backends.cuda.flash_sdp_enabled()
+        model.set_attn_implementation("flash_attention_2")
+        return
+
+    warnings.warn(
+        "flash_attn is unavailable for packed training; falling back to SDPA.",
+        stacklevel=2,
+    )
 
 
 @torch.inference_mode()
@@ -256,7 +299,18 @@ def main(
     batch_size: int = DEFAULT_BATCH_SIZE,
 ):
     """Fine-tune the pretrained base model on the configured instruction dataset."""
-    wandb.init(project="gpt-2.5")
+    rank = int(os.environ.get("RANK", "0"))
+    report_to = "none"
+    if rank == 0:
+        try:
+            wandb.init(project="gpt-2.5")
+            report_to = "wandb"
+        except (CommError, UsageError) as exc:
+            warnings.warn(
+                f"W&B initialization failed; continuing without remote logging: {exc}",
+                stacklevel=2,
+            )
+    training_dtype = get_training_dtype()
 
     base_model = _load_pretraining_model(
         repo_id=pretraining_repo_id,
@@ -265,9 +319,8 @@ def main(
         local_dir=pretraining_local_dir,
     )
     model = _build_hf_model(base_model)
-    if PACKING:
-        assert torch.backends.cuda.flash_sdp_enabled()
-        model.set_attn_implementation("flash_attention_2")
+    model.config.dtype = training_dtype
+    configure_packed_attention(model)
 
     tokenizer = get_tokenizer(tokenizer_path="gpt2")
     model.resize_token_embeddings(len(tokenizer))
@@ -277,9 +330,10 @@ def main(
 
     trainer_args = SFTConfig(
         eval_strategy="epoch",
+        gradient_checkpointing=False,
         include_for_metrics=["loss"],
         logging_steps=100,
-        report_to="wandb",
+        report_to=report_to,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         prediction_loss_only=True,
@@ -287,6 +341,7 @@ def main(
         learning_rate=1e-5,
         assistant_only_loss=True,
         packing=PACKING,
+        **get_trainer_precision_kwargs(training_dtype),
     )
 
     trainer = SFTTrainer(

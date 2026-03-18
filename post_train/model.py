@@ -1,3 +1,5 @@
+import logging
+
 import torch.nn.functional as F
 from huggingface_hub import snapshot_download
 from pre_train.model import GPTConfig, TransformerLM, load_checkpoint
@@ -9,6 +11,7 @@ DEFAULT_PRETRAINING_REPO_ID = "itskoma/GPT2.5"
 DEFAULT_PRETRAINING_CHECKPOINT_PATTERN = "pretraining_checkpoint/*"
 DEFAULT_PRETRAINING_CHECKPOINT_PATH = "checkpoints/pretraining_checkpoint/"
 DEFAULT_PRETRAINING_LOCAL_DIR = "checkpoints"
+logger = logging.getLogger(__name__)
 
 
 class MyConfig(PretrainedConfig):
@@ -59,6 +62,32 @@ class HFTransformerLM(PreTrainedModel):
         )
         self._sync_attn_implementation()
         self.post_init()
+
+    def _check_and_adjust_attn_implementation(
+        self, attn_implementation: str | None, is_init_check: bool = False
+    ) -> str:
+        try:
+            return super()._check_and_adjust_attn_implementation(
+                attn_implementation, is_init_check=is_init_check
+            )
+        except Exception as exc:
+            if attn_implementation is None:
+                raise
+
+            is_paged = attn_implementation.startswith("paged|")
+            requested_implementation = attn_implementation.removeprefix("paged|")
+            if requested_implementation not in {"flash_attention_2", "flash_attention_3"}:
+                raise
+
+            fallback_implementation = "paged|sdpa" if is_paged else "sdpa"
+            logger.warning(
+                "FlashAttention requested but unavailable (%s). Falling back to %s.",
+                exc,
+                fallback_implementation,
+            )
+            return super()._check_and_adjust_attn_implementation(
+                fallback_implementation, is_init_check=is_init_check
+            )
 
     def _get_runtime_attn_implementation(self) -> str:
         return self.config._attn_implementation.removeprefix("paged|")
