@@ -9,8 +9,8 @@ import wandb
 from post_train.model import (
     DEFAULT_PRETRAINING_CHECKPOINT_PATH,
     DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
-    DEFAULT_PRETRAINING_LOCAL_DIR,
-    DEFAULT_PRETRAINING_REPO_ID,
+    DEFAULT_CHECKPOINT_LOCAL_DIR,
+    DEFAULT_REPO_ID,
     HFTransformerLM,
     MyConfig,
     _build_base_model,
@@ -21,21 +21,24 @@ from pre_train.model import GPTConfig, softmax, top_p_sampling
 from transformers import AutoTokenizer
 import tiktoken
 from datasets import load_dataset
+from huggingface_hub import snapshot_download
 from trl import SFTTrainer, SFTConfig
 from wandb.errors import CommError, UsageError
 
 
-DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint"
+DEFAULT_POSTTRAINING_REPO_ID = "itskoma/GPT2.5"
+DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN = "posttraining_checkpoint/*"
+DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint/"
+
 DEFAULT_DATASET_ID = "HuggingFaceTB/smol-smoltalk"
 DEFAULT_BATCH_SIZE = 16
 PACKING = True
 ENCODER = tiktoken.get_encoding("gpt2")
 __all__ = [
-    "DEFAULT_PRETRAINING_REPO_ID",
+    "DEFAULT_REPO_ID",
     "DEFAULT_PRETRAINING_CHECKPOINT_PATTERN",
     "DEFAULT_PRETRAINING_CHECKPOINT_PATH",
-    "DEFAULT_PRETRAINING_LOCAL_DIR",
-    "DEFAULT_POSTTRAINING_CHECKPOINT_PATH",
+    "DEFAULT_CHECKPOINT_LOCAL_DIR",
     "DEFAULT_DATASET_ID",
     "DEFAULT_BATCH_SIZE",
     "ENCODER",
@@ -229,11 +232,10 @@ def get_tokenizer(tokenizer_path="gpt2"):
 def inference_test(
     prompt: str | None = None,
     pretraining_checkpoint=True,
-    pretraining_repo_id: str = DEFAULT_PRETRAINING_REPO_ID,
-    pretraining_checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
-    pretraining_checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
-    pretraining_local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
-    posttraining_checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+    repo_id: str = DEFAULT_REPO_ID,
+    checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
+    checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
+    local_dir: str = DEFAULT_CHECKPOINT_LOCAL_DIR,
     encoder=ENCODER,
     context_length=GPTConfig.context_length,
     max_tokens: int = 50,
@@ -245,16 +247,30 @@ def inference_test(
 ):
     """Run a quick generation smoke test from either the base or posttrained model."""
     if pretraining_checkpoint:
+        assert "pretraining" in checkpoint_path, """
+        f"pretraining_checkpoint is set to {pretraining_checkpoint},
+        but checkpoint_path is not for a pretraining checkpoint"""
+
         model = _build_hf_model(
             _load_pretraining_model(
-                repo_id=pretraining_repo_id,
-                checkpoint_pattern=pretraining_checkpoint_pattern,
-                checkpoint_path=pretraining_checkpoint_path,
-                local_dir=pretraining_local_dir,
+                repo_id=repo_id,
+                checkpoint_pattern=checkpoint_pattern,
+                checkpoint_path=checkpoint_path,
+                local_dir=local_dir,
             )
         )
     else:
-        model = HFTransformerLM.from_pretrained(posttraining_checkpoint_path)
+        assert "posttraining" in checkpoint_path, """
+        f"pretraining_checkpoint is set to {pretraining_checkpoint},
+        but checkpoint_path is not path to a posttraining checkpoint"""
+
+        snapshot_download(
+            repo_id,
+            allow_patterns=checkpoint_pattern,
+            repo_type="model",
+            local_dir=local_dir,
+        )
+        model = HFTransformerLM.from_pretrained(checkpoint_path)
 
     device = GPTConfig.device if device is None else device
     model.tie_weights()
@@ -288,10 +304,10 @@ def inference_test(
 
 
 def main(
-    pretraining_repo_id: str = DEFAULT_PRETRAINING_REPO_ID,
+    repo_id: str = DEFAULT_REPO_ID,
     pretraining_checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
     pretraining_checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
-    pretraining_local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
+    pretraining_local_dir: str = DEFAULT_CHECKPOINT_LOCAL_DIR,
     posttraining_checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
     dataset_id: str = DEFAULT_DATASET_ID,
     dataset_split: str = None,
@@ -312,7 +328,7 @@ def main(
     training_dtype = get_training_dtype()
 
     base_model = _load_pretraining_model(
-        repo_id=pretraining_repo_id,
+        repo_id=repo_id,
         checkpoint_pattern=pretraining_checkpoint_pattern,
         checkpoint_path=pretraining_checkpoint_path,
         local_dir=pretraining_local_dir,
@@ -357,6 +373,9 @@ def main(
 
 
 if __name__ == "__main__":
-    #main()
-    inference_test(pretraining_checkpoint=False, 
-                   posttraining_checkpoint_path="checkpoints/posttraining_checkpoint")
+    # main()
+    inference_test(
+        pretraining_checkpoint=False,
+        checkpoint_pattern=DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN,
+        checkpoint_path=DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+    )

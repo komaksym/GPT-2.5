@@ -7,10 +7,10 @@ from transformers import PreTrainedModel, PretrainedConfig
 from transformers.modeling_outputs import CausalLMOutput
 
 
-DEFAULT_PRETRAINING_REPO_ID = "itskoma/GPT2.5"
+DEFAULT_REPO_ID = "itskoma/GPT2.5"
 DEFAULT_PRETRAINING_CHECKPOINT_PATTERN = "pretraining_checkpoint/*"
 DEFAULT_PRETRAINING_CHECKPOINT_PATH = "checkpoints/pretraining_checkpoint/"
-DEFAULT_PRETRAINING_LOCAL_DIR = "checkpoints"
+DEFAULT_CHECKPOINT_LOCAL_DIR = "checkpoints"
 logger = logging.getLogger(__name__)
 
 
@@ -77,7 +77,10 @@ class HFTransformerLM(PreTrainedModel):
 
             is_paged = attn_implementation.startswith("paged|")
             requested_implementation = attn_implementation.removeprefix("paged|")
-            if requested_implementation not in {"flash_attention_2", "flash_attention_3"}:
+            if requested_implementation not in {
+                "flash_attention_2",
+                "flash_attention_3",
+            }:
                 raise
 
             fallback_implementation = "paged|sdpa" if is_paged else "sdpa"
@@ -155,10 +158,10 @@ def _build_base_model():
 
 
 def _load_pretraining_model(
-    repo_id: str = DEFAULT_PRETRAINING_REPO_ID,
+    repo_id: str = DEFAULT_REPO_ID,
     checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
     checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
-    local_dir: str = DEFAULT_PRETRAINING_LOCAL_DIR,
+    local_dir: str = DEFAULT_CHECKPOINT_LOCAL_DIR,
 ):
     """Download and load a base checkpoint into a fresh TransformerLM."""
     base_model = _build_base_model()
