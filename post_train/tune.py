@@ -24,6 +24,8 @@ from datasets import load_dataset
 from huggingface_hub import snapshot_download
 from trl import SFTTrainer, SFTConfig
 from wandb.errors import CommError, UsageError
+import sys
+
 
 
 DEFAULT_POSTTRAINING_REPO_ID = "itskoma/GPT2.5"
@@ -50,7 +52,6 @@ __all__ = [
     "compute_metrics",
     "get_trainer_precision_kwargs",
     "get_training_dtype",
-    "generate",
     "chat",
     "inference_test",
     "is_flash_attn_2_installed",
@@ -172,16 +173,17 @@ def chat(
     )
 
     model.eval()
-    waiting_for_response_schema = "\n-----------------Responding...-----------------\n"
+    waiting_for_response_schema = "\n" + "-" * 30 + "Responding..." + "-" * 30 + "\n"
     stop_word = "e"
     context = ""
 
     while True:
-        print("#" * 10, f"Ask anything. To end, type {stop_word}", "#" * 10)
+        print("#" * 20, f"Ask anything. To end, type {stop_word}", "#" * 20)
+        sys.stdout.write("PROMPT: ")
         user_input = input()
         if user_input == stop_word:
             break
-        print(user_input + waiting_for_response_schema)
+        print(waiting_for_response_schema)
         prompt = f"Instruction:\n{user_input}\nResponse:\n"
         context += prompt
         response = generate(
@@ -195,7 +197,7 @@ def chat(
             top_p=top_p,
             device=device,
         )[0]
-        print(response, end="\n" * 2)
+        print("RESPONSE: ", response, end="\n" * 2)
         context += response
 
 
