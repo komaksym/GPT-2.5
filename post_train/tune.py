@@ -18,14 +18,12 @@ from post_train.model import (
     _load_pretraining_model,
 )
 from pre_train.model import GPTConfig, softmax, top_p_sampling
-from transformers import AutoTokenizer
-import tiktoken
+from transformers import AutoTokenizer, PythonBackend
 from datasets import load_dataset
 from huggingface_hub import snapshot_download
 from trl import SFTTrainer, SFTConfig
 from wandb.errors import CommError, UsageError
 import sys
-
 
 
 DEFAULT_POSTTRAINING_REPO_ID = "itskoma/GPT2.5"
@@ -35,7 +33,6 @@ DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint/"
 DEFAULT_DATASET_ID = "HuggingFaceTB/smol-smoltalk"
 DEFAULT_BATCH_SIZE = 16
 PACKING = True
-ENCODER = tiktoken.get_encoding("gpt2")
 __all__ = [
     "DEFAULT_REPO_ID",
     "DEFAULT_PRETRAINING_CHECKPOINT_PATTERN",
@@ -43,7 +40,6 @@ __all__ = [
     "DEFAULT_CHECKPOINT_LOCAL_DIR",
     "DEFAULT_DATASET_ID",
     "DEFAULT_BATCH_SIZE",
-    "ENCODER",
     "MyConfig",
     "HFTransformerLM",
     "_build_base_model",
@@ -112,7 +108,7 @@ def generate(
     context_length: int = GPTConfig.context_length,
     batch_size: int = 1,
     model: HFTransformerLM | None = None,
-    encoder=ENCODER,
+    tokenizer: PythonBackend = None,
     temp: float = 0.9,
     top_p: float = 0.8,
     device: torch.device | None = None,
@@ -135,12 +131,14 @@ def generate(
     if token_limit is None:
         raise ValueError("Either max_tokens or max_new_tokens must be provided")
 
-    stop_words = ["<|endoftext|>", "Instruction:\n"]
+    stop_words = ["<|endoftext|>\n", "<|user|>\n", "<|system|>\n"]
     responses = []
 
     for _ in range(batch_size):
         response_tokens = []
-        inputs = torch.tensor(encoder.encode(prompt), device=device).unsqueeze(0)
+        inputs = tokenizer.apply_chat_template(
+            prompt, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+        )
         for _ in range(token_limit):
             if inputs.shape[-1] > context_length:
                 inputs = inputs[:, -context_length:]
@@ -150,17 +148,17 @@ def generate(
             next_token = top_p_sampling(probs, p=top_p)
             inputs = torch.cat((inputs, next_token), dim=1)
             response_tokens.append(next_token.item())
-            if encoder.decode([next_token.item()]) in stop_words:
+            if tokenizer.decode([next_token.item()]) in stop_words:
                 break
 
-        responses.append(encoder.decode(response_tokens) + "\n")
+        responses.append(tokenizer.decode(response_tokens) + "\n")
 
     return responses
 
 
 def chat(
     model,
-    encoder=ENCODER,
+    tokenizer: PythonBackend = None,
     context_length: int = 1024,
     max_new_tokens: int = 128,
     temp: float = 0.9,
@@ -184,7 +182,7 @@ def chat(
         if user_input == stop_word:
             break
         print(waiting_for_response_schema)
-        prompt = f"Instruction:\n{user_input}\nResponse:\n"
+        prompt = f"<|user|>\n{user_input}\nResponse:\n"
         context += prompt
         response = generate(
             prompt=context,
@@ -192,7 +190,7 @@ def chat(
             context_length=context_length,
             batch_size=1,
             model=model,
-            encoder=encoder,
+            tokenizer=tokenizer,
             temp=temp,
             top_p=top_p,
             device=device,
@@ -232,71 +230,37 @@ def get_tokenizer(tokenizer_path="gpt2"):
 
 
 def inference_test(
-    prompt: str | None = None,
-    pretraining_checkpoint=True,
     repo_id: str = DEFAULT_REPO_ID,
-    checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
-    checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
+    checkpoint_pattern: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN,
+    checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
     local_dir: str = DEFAULT_CHECKPOINT_LOCAL_DIR,
-    encoder=ENCODER,
+    tokenizer: PythonBackend = None,
     context_length=GPTConfig.context_length,
-    max_tokens: int = 50,
-    batch_size: int = 5,
     max_new_tokens: int = 128,
     temp: float = 0.9,
     top_p: float = 0.8,
     device: torch.device | None = None,
 ):
-    """Run a quick generation smoke test from either the base or posttrained model."""
-    if pretraining_checkpoint:
-        assert "pretraining" in checkpoint_path, """
-        f"pretraining_checkpoint is set to {pretraining_checkpoint},
-        but checkpoint_path is not for a pretraining checkpoint"""
+    assert "posttraining" in checkpoint_path, (
+        "checkpoint_path is not path to a POST-training checkpoint"
+    )
 
-        model = _build_hf_model(
-            _load_pretraining_model(
-                repo_id=repo_id,
-                checkpoint_pattern=checkpoint_pattern,
-                checkpoint_path=checkpoint_path,
-                local_dir=local_dir,
-            )
-        )
-    else:
-        assert "posttraining" in checkpoint_path, """
-        f"pretraining_checkpoint is set to {pretraining_checkpoint},
-        but checkpoint_path is not path to a posttraining checkpoint"""
-
-        snapshot_download(
-            repo_id,
-            allow_patterns=checkpoint_pattern,
-            repo_type="model",
-            local_dir=local_dir,
-        )
-        model = HFTransformerLM.from_pretrained(checkpoint_path)
+    snapshot_download(
+        repo_id,
+        allow_patterns=checkpoint_pattern,
+        repo_type="model",
+        local_dir=local_dir,
+    )
+    model = HFTransformerLM.from_pretrained(checkpoint_path)
 
     device = GPTConfig.device if device is None else device
     model.tie_weights()
     model.to(device)
     model.eval()
 
-    if prompt is not None:
-        responses = generate(
-            prompt=prompt,
-            max_tokens=max_tokens,
-            context_length=context_length,
-            batch_size=batch_size,
-            model=model,
-            encoder=encoder,
-            temp=temp,
-            top_p=top_p,
-            device=device,
-        )
-        _print_sequences(responses)
-        return
-
     chat(
-        model,
-        encoder,
+        model=model,
+        tokenizer=tokenizer,
         context_length=context_length,
         max_new_tokens=max_new_tokens,
         temp=temp,
