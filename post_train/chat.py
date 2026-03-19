@@ -45,6 +45,7 @@ def generate(
         raise ValueError("Either max_tokens or max_new_tokens must be provided")
 
     stop_words = ["<|endoftext|>", "<|user|>", "<|system|>"]
+    stop_reason = ""
 
     response_tokens = []
     inputs = tokenizer.apply_chat_template(
@@ -62,13 +63,20 @@ def generate(
             logits = model(inputs).logits
         probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
         next_token = top_p_sampling(probs, p=top_p)
-        if tokenizer.decode([next_token.item()]) in stop_words:
+        decoded_next_tok = tokenizer.decode([next_token.item()])
+        if decoded_next_tok in stop_words:
+            stop_reason = f"STOPWORD: {decoded_next_tok}."
             break
         inputs = torch.cat((inputs, next_token), dim=1)
         response_tokens.append(next_token.item())
 
+    if not stop_reason:
+        stop_reason = "MAX TOKEN LIMIT EXCEEDED."
+
+    ctx_before_response = tokenizer.decode(inputs)[0].split("<|assistant|>")[:-1]
+    print(f"CONTEXT SEEN BY THE MODEL:\n {ctx_before_response}\n")
     answer = tokenizer.decode(response_tokens)
-    return answer.strip()
+    return answer.strip(), stop_reason
 
 
 def chat(
@@ -99,7 +107,7 @@ def chat(
             break
         print(waiting_for_response_schema)
         context.append({"content": user_input, "role": "user"})
-        response = generate(
+        response, stop_reason = generate(
             context=context,
             max_new_tokens=max_new_tokens,
             context_length=context_length,
@@ -109,7 +117,7 @@ def chat(
             top_p=top_p,
             device=device,
         )
-        print("RESPONSE: ", response, end="\n" * 2)
+        print("RESPONSE: ", response, f"\nSTOP REASON: {stop_reason}", end="\n" * 2)
         context.append({"content": response, "role": "assistant"})
 
 
@@ -140,6 +148,7 @@ def run_inference(
     device = GPTConfig.device if device is None else device
     model.tie_weights()
     model.to(device)
+    #model = torch.compile(model, mode="default")
 
     tokenizer = get_tokenizer()
 
@@ -158,4 +167,5 @@ if __name__ == "__main__":
     run_inference(
         checkpoint_pattern=DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN,
         checkpoint_path=DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+        max_new_tokens=256,
     )
