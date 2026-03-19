@@ -11,6 +11,7 @@ from post_train.model import (
 from post_train.tune import (
     DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN,
     DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+    get_tokenizer
 )
 
 
@@ -47,8 +48,10 @@ def generate(
 
     response_tokens = []
     inputs = tokenizer.apply_chat_template(
-        context, tokenize=True, add_generation_prompt=True, return_tensors="pt"
-    )
+        context, tokenize=True, add_generation_prompt=True,
+        return_tensors="pt" 
+    ).input_ids
+    inputs = inputs.to(device=device)
 
     for _ in range(token_limit):
         if inputs.shape[-1] > context_length:
@@ -88,14 +91,14 @@ def chat(
 
     while True:
         print("#" * 20, f"Ask anything. To end, type {stop_word}", "#" * 20)
-        sys.stdout.write("PROMPT: ")
+        sys.stdout.write("\nPROMPT: ")
         user_input = input()
         if user_input == stop_word:
             break
         print(waiting_for_response_schema)
         context.append({"content": user_input, "role": "user"})
         response = generate(
-            prompt=context,
+            context=context,
             max_new_tokens=max_new_tokens,
             context_length=context_length,
             model=model,
@@ -135,6 +138,8 @@ def run_inference(
     device = GPTConfig.device if device is None else device
     model.tie_weights()
     model.to(device)
+
+    tokenizer = get_tokenizer()
 
     chat(
         model=model,
