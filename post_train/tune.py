@@ -103,20 +103,19 @@ def configure_packed_attention(model) -> None:
 
 @torch.inference_mode()
 def generate(
-    prompt: str,
+    context: list[dict],
     max_tokens: int | None = None,
     context_length: int = GPTConfig.context_length,
-    batch_size: int = 1,
     model: HFTransformerLM | None = None,
     tokenizer: PythonBackend = None,
     temp: float = 0.9,
     top_p: float = 0.8,
     device: torch.device | None = None,
     max_new_tokens: int | None = None,
-) -> list[str]:
+) -> str:
     """
     Main generation loop for the posttraining LLM.
-    prompt: starting text
+    context: chat context (previous user prompts and responses)
     max_tokens: number of tokens to generate per sequence
     context_length: maximum window size the model can handle
     batch_size: number of responses to generate
@@ -132,28 +131,27 @@ def generate(
         raise ValueError("Either max_tokens or max_new_tokens must be provided")
 
     stop_words = ["<|endoftext|>\n", "<|user|>\n", "<|system|>\n"]
-    responses = []
 
-    for _ in range(batch_size):
-        response_tokens = []
-        inputs = tokenizer.apply_chat_template(
-            prompt, tokenize=True, add_generation_prompt=True, return_tensors="pt"
-        )
-        for _ in range(token_limit):
-            if inputs.shape[-1] > context_length:
-                inputs = inputs[:, -context_length:]
-            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                logits = model(inputs).logits
-            probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
-            next_token = top_p_sampling(probs, p=top_p)
-            inputs = torch.cat((inputs, next_token), dim=1)
-            response_tokens.append(next_token.item())
-            if tokenizer.decode([next_token.item()]) in stop_words:
-                break
+    response_tokens = []
+    inputs = tokenizer.apply_chat_template(
+        context, tokenize=True, add_generation_prompt=True, return_tensors="pt"
+    )
 
-        responses.append(tokenizer.decode(response_tokens) + "\n")
+    for _ in range(token_limit):
+        if inputs.shape[-1] > context_length:
+            inputs = inputs[:, -context_length:]
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            logits = model(inputs).logits
+        probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
+        next_token = top_p_sampling(probs, p=top_p)
+        inputs = torch.cat((inputs, next_token), dim=1)
+        response_tokens.append(next_token.item())
+        if tokenizer.decode([next_token.item()]) in stop_words:
+            break
 
-    return responses
+    updated_context = tokenizer.decode(response_tokens)
+    last_answer = updated_context.split("<|assistant|>")[-1]
+    return last_answer
 
 
 def chat(
@@ -173,7 +171,7 @@ def chat(
     model.eval()
     waiting_for_response_schema = "\n" + "-" * 30 + "Responding..." + "-" * 30 + "\n"
     stop_word = "e"
-    context = ""
+    context = []
 
     while True:
         print("#" * 20, f"Ask anything. To end, type {stop_word}", "#" * 20)
@@ -182,26 +180,19 @@ def chat(
         if user_input == stop_word:
             break
         print(waiting_for_response_schema)
-        prompt = f"<|user|>\n{user_input}\nResponse:\n"
-        context += prompt
+        context.append({"content": user_input, "role": "user"})
         response = generate(
             prompt=context,
             max_new_tokens=max_new_tokens,
             context_length=context_length,
-            batch_size=1,
             model=model,
             tokenizer=tokenizer,
             temp=temp,
             top_p=top_p,
             device=device,
-        )[0]
+        )
         print("RESPONSE: ", response, end="\n" * 2)
-        context += response
-
-
-def _print_sequences(sequences: list[str]) -> None:
-    for sequence in sequences:
-        print(sequence, end="" if sequence.endswith("\n") else "\n")
+        context.append({"content": response, "role": "assistant"})
 
 
 def get_tokenizer(tokenizer_path="gpt2"):
@@ -256,7 +247,6 @@ def inference_test(
     device = GPTConfig.device if device is None else device
     model.tie_weights()
     model.to(device)
-    model.eval()
 
     chat(
         model=model,
