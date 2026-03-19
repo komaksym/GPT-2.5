@@ -44,13 +44,15 @@ def generate(
     if token_limit is None:
         raise ValueError("Either max_tokens or max_new_tokens must be provided")
 
-    stop_words = ["<|endoftext|>\n", "<|user|>\n", "<|system|>\n"]
+    stop_words = ["<|endoftext|>", "<|user|>", "<|system|>"]
 
     response_tokens = []
     inputs = tokenizer.apply_chat_template(
         context, tokenize=True, add_generation_prompt=True,
         return_tensors="pt" 
-    ).input_ids
+    )
+    if len(inputs) > 1:
+        inputs = inputs.input_ids
     inputs = inputs.to(device=device)
 
     for _ in range(token_limit):
@@ -60,14 +62,13 @@ def generate(
             logits = model(inputs).logits
         probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
         next_token = top_p_sampling(probs, p=top_p)
-        inputs = torch.cat((inputs, next_token), dim=1)
-        response_tokens.append(next_token.item())
         if tokenizer.decode([next_token.item()]) in stop_words:
             break
+        inputs = torch.cat((inputs, next_token), dim=1)
+        response_tokens.append(next_token.item())
 
-    updated_context = tokenizer.decode(response_tokens)
-    last_answer = updated_context.split("<|assistant|>")[-1]
-    return last_answer
+    answer = tokenizer.decode(response_tokens)
+    return answer.strip()
 
 
 def chat(
@@ -92,7 +93,8 @@ def chat(
     while True:
         print("#" * 20, f"Ask anything. To end, type {stop_word}", "#" * 20)
         sys.stdout.write("\nPROMPT: ")
-        user_input = input()
+        user_input = input() 
+        #user_input = "Hello, how are you?" # OVERRIDE (REMOVE LATER)
         if user_input == stop_word:
             break
         print(waiting_for_response_schema)
