@@ -11,6 +11,7 @@ DEFAULT_REPO_ID = "itskoma/GPT2.5"
 DEFAULT_PRETRAINING_CHECKPOINT_PATTERN = "pretraining_checkpoint/*"
 DEFAULT_PRETRAINING_CHECKPOINT_PATH = "checkpoints/pretraining_checkpoint/"
 DEFAULT_CHECKPOINT_LOCAL_DIR = "checkpoints"
+DEFAULT_CHECKPOINT_SUBFOLDER = "pretraining_checkpoint"
 logger = logging.getLogger(__name__)
 
 

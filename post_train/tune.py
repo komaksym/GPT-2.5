@@ -7,12 +7,9 @@ import numpy as np
 import torch
 import wandb
 from post_train.model import (
-    DEFAULT_PRETRAINING_CHECKPOINT_PATH,
-    DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
-    DEFAULT_CHECKPOINT_LOCAL_DIR,
     DEFAULT_REPO_ID,
-    _build_hf_model,
-    _load_pretraining_model,
+    DEFAULT_CHECKPOINT_SUBFOLDER,
+    HFTransformerLM
 )
 from datasets import load_dataset
 from transformers import AutoTokenizer
@@ -20,12 +17,10 @@ from trl import SFTTrainer, SFTConfig
 from wandb.errors import CommError, UsageError
 
 
-DEFAULT_POSTTRAINING_REPO_ID = "itskoma/GPT2.5"
 DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN = "posttraining_checkpoint/*"
-DEFAULT_POSTTRAINING_CHECKPOINT_PATH = "checkpoints/posttraining_checkpoint/"
 
 DEFAULT_DATASET_ID = "HuggingFaceTB/smol-smoltalk"
-DEFAULT_BATCH_SIZE = 16
+DEFAULT_BATCH_SIZE = 1
 PACKING = True
 
 
@@ -102,10 +97,7 @@ def get_tokenizer(tokenizer_path="gpt2"):
 
 def main(
     repo_id: str = DEFAULT_REPO_ID,
-    pretraining_checkpoint_pattern: str = DEFAULT_PRETRAINING_CHECKPOINT_PATTERN,
-    pretraining_checkpoint_path: str = DEFAULT_PRETRAINING_CHECKPOINT_PATH,
-    pretraining_local_dir: str = DEFAULT_CHECKPOINT_LOCAL_DIR,
-    posttraining_checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+    checkpoint_subfolder: str = DEFAULT_CHECKPOINT_SUBFOLDER,
     dataset_id: str = DEFAULT_DATASET_ID,
     dataset_split: str = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -124,13 +116,7 @@ def main(
             )
     training_dtype = get_training_dtype()
 
-    base_model = _load_pretraining_model(
-        repo_id=repo_id,
-        checkpoint_pattern=pretraining_checkpoint_pattern,
-        checkpoint_path=pretraining_checkpoint_path,
-        local_dir=pretraining_local_dir,
-    )
-    model = _build_hf_model(base_model)
+    model = HFTransformerLM.from_pretrained(repo_id, subfolder=checkpoint_subfolder)
     model.config.dtype = training_dtype
     configure_packed_attention(model)
 
@@ -138,18 +124,16 @@ def main(
     model.resize_token_embeddings(len(tokenizer))
     model.tie_weights()
 
-    dataset = load_dataset(dataset_id, dataset_split=dataset_split)
+    dataset = load_dataset(dataset_id, split=dataset_split)
 
     trainer_args = SFTConfig(
         eval_strategy="epoch",
         gradient_checkpointing=False,
-        include_for_metrics=["loss"],
         logging_steps=100,
         save_steps=1000,
         report_to=report_to,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
-        prediction_loss_only=True,
         num_train_epochs=3,
         learning_rate=1e-5,
         assistant_only_loss=True,
@@ -166,8 +150,7 @@ def main(
         compute_metrics=compute_metrics,
     )
     trainer.train()
-    trainer.save_model(posttraining_checkpoint_path)
 
-
+   
 if __name__ == "__main__":
     main()
