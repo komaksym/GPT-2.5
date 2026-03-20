@@ -1,18 +1,18 @@
 from pre_train.model import GPTConfig, softmax, top_p_sampling
 from transformers import PythonBackend
 import sys
-from huggingface_hub import snapshot_download
 import torch
-from post_train.model import HFTransformerLM
 from post_train.model import (
+    HFTransformerLM,
     DEFAULT_REPO_ID,
-    DEFAULT_CHECKPOINT_LOCAL_DIR,
 )
 from post_train.tune import (
     DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN,
     DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
-    get_tokenizer
+    get_tokenizer,
 )
+
+DEFAULT_POSTTRAINING_SUBFOLDER = "posttraining_checkpoint"
 
 
 @torch.inference_mode()
@@ -49,8 +49,7 @@ def generate(
 
     response_tokens = []
     inputs = tokenizer.apply_chat_template(
-        context, tokenize=True, add_generation_prompt=True,
-        return_tensors="pt" 
+        context, tokenize=True, add_generation_prompt=True, return_tensors="pt"
     )
     if len(inputs) > 1:
         inputs = inputs.input_ids
@@ -101,8 +100,8 @@ def chat(
     while True:
         print("#" * 20, f"Ask anything. To end, type {stop_word}", "#" * 20)
         sys.stdout.write("\nPROMPT: ")
-        user_input = input() 
-        #user_input = "Hello, how are you?" # OVERRIDE (REMOVE LATER)
+        user_input = input()
+        # user_input = "Hello, how are you?" # OVERRIDE (REMOVE LATER)
         if user_input == stop_word:
             break
         print(waiting_for_response_schema)
@@ -123,9 +122,7 @@ def chat(
 
 def run_inference(
     repo_id: str = DEFAULT_REPO_ID,
-    checkpoint_pattern: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN,
-    checkpoint_path: str = DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
-    local_dir: str = DEFAULT_CHECKPOINT_LOCAL_DIR,
+    repo_id_subfolder: str = DEFAULT_POSTTRAINING_SUBFOLDER,
     tokenizer: PythonBackend = None,
     context_length=GPTConfig.context_length,
     max_new_tokens: int = 128,
@@ -133,22 +130,12 @@ def run_inference(
     top_p: float = 0.8,
     device: torch.device | None = None,
 ):
-    assert "posttraining" in checkpoint_path, (
-        "checkpoint_path is not path to a POST-training checkpoint"
-    )
-
-    snapshot_download(
-        repo_id,
-        allow_patterns=checkpoint_pattern,
-        repo_type="model",
-        local_dir=local_dir,
-    )
-    model = HFTransformerLM.from_pretrained(checkpoint_path)
+    model = HFTransformerLM.from_pretrained(repo_id, subfolder=repo_id_subfolder)
 
     device = GPTConfig.device if device is None else device
     model.tie_weights()
     model.to(device)
-    #model = torch.compile(model, mode="default")
+    # model = torch.compile(model, mode="default")
 
     tokenizer = get_tokenizer()
 
