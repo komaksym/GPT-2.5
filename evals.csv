@@ -1,0 +1,7 @@
+benchmark_name,metric,pretrained,posttrained
+HuggingFaceTB/smol-smoltalk/test,loss,5.1788,2.8566
+HuggingFaceTB/smol-smoltalk/test,perplexity,177.4779,17.4023
+HellaSwag,,,
+PIQA,,,
+ARC-Easy,,,
+IFEval,,,
