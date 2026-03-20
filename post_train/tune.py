@@ -20,7 +20,7 @@ from wandb.errors import CommError, UsageError
 DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN = "posttraining_checkpoint/*"
 
 DEFAULT_DATASET_ID = "HuggingFaceTB/smol-smoltalk"
-DEFAULT_BATCH_SIZE = 1
+DEFAULT_BATCH_SIZE = 8
 PACKING = True
 
 
@@ -137,6 +137,7 @@ def main(
         num_train_epochs=3,
         learning_rate=1e-5,
         assistant_only_loss=True,
+        prediction_loss_only=True,
         packing=PACKING,
         **get_trainer_precision_kwargs(training_dtype),
     )
@@ -149,8 +150,9 @@ def main(
         eval_dataset=dataset["test"],
         compute_metrics=compute_metrics,
     )
-    trainer.train()
+    metrics = trainer.evaluate()
+    print(metrics)
 
    
 if __name__ == "__main__":
-    main()
+    main(checkpoint_subfolder="posttraining_checkpoint")
