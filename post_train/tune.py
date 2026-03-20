@@ -150,9 +150,8 @@ def main(
         eval_dataset=dataset["test"],
         compute_metrics=compute_metrics,
     )
-    metrics = trainer.evaluate()
-    print(metrics)
+    trainer.train()
 
    
 if __name__ == "__main__":
-    main(checkpoint_subfolder="posttraining_checkpoint")
+    main()
