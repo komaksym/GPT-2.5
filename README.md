@@ -68,7 +68,7 @@ Trained on a cluster of **4x NVIDIA H100 SXM5 80GB** GPUs.
 
 <img src="results.png" alt="Training Results Graph" width="800">
 
-> **Note**: HellaSwag evaluation now runs across the full validation split on each evaluation step, so the logged accuracy reflects the complete benchmark instead of a sampled mini-batch.
+> **Note**: HellaSwag evaluation runs on a random mini-batch of the test evaluation dataset, which leads to a spikey curve like above.
 
 ---
 
