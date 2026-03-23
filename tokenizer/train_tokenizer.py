@@ -13,7 +13,9 @@ special_tokens = ["<|endoftext|>", "<start>", "<end>"]
 vocab_size = 50257
 num_of_merges = vocab_size - 256
 
-pretok_PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+pretok_PAT = (
+    r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+)
 
 
 def read_data(input_path: str | os.PathLike) -> str:
@@ -66,7 +68,7 @@ def split_to_bytes(corpus: dict[str, int]) -> dict[tuple[str, ...], int]:
     counts = {}
     # Count byte pairs
     for k, v in corpus.items():
-        new_key = tuple([c for c in k]) # "iron" -> ('i', 'r', 'o', 'n')
+        new_key = tuple([c for c in k])  # "iron" -> ('i', 'r', 'o', 'n')
         counts[new_key] = v
 
     # Sort by the highest frequency
@@ -94,15 +96,15 @@ def count_bytepairs(
                 # Find all pairs in w
                 current_pairs = []
                 for i in range(len(w) - 1):
-                    current_pairs.append((w[i], w[i+1]))
-                
+                    current_pairs.append((w[i], w[i + 1]))
+
                 # Decrement counts
                 for p in current_pairs:
                     if p in bp_to_counts:
                         bp_to_counts[p] -= freq
-                        if bp_to_counts[p] <= 0:
-                             if p in bp_to_counts: del bp_to_counts[p]
-                
+                        if bp_to_counts[p] <= 0 and p in bp_to_counts:
+                            del bp_to_counts[p]
+
                 # Remove w from bp_to_words for unique pairs
                 for p in set(current_pairs):
                     if p in bp_to_words and w in bp_to_words[p]:
@@ -115,8 +117,8 @@ def count_bytepairs(
             freq = corpus[w]
             current_pairs = []
             for i in range(len(w) - 1):
-                current_pairs.append((w[i], w[i+1]))
-            
+                current_pairs.append((w[i], w[i + 1]))
+
             for p in current_pairs:
                 bp_to_counts[p] = bp_to_counts.get(p, 0) + freq
                 bp_to_words[p].add(w)
@@ -158,7 +160,9 @@ def merge(
     corpus: dict[tuple[str, ...], int],
     merge_pair: str,
     merge_pair_words: set[tuple[str, ...]],
-) -> tuple[dict[tuple[str, ...], int], set[tuple[str, ...]], dict[tuple[str, ...], int]]:
+) -> tuple[
+    dict[tuple[str, ...], int], set[tuple[str, ...]], dict[tuple[str, ...], int]
+]:
     """
     Merges a specific byte pair across all words that contain it in the corpus.
     Returns the updated corpus, the set of newly merged words, and the freqs of removed words.
@@ -201,7 +205,7 @@ def merge(
 def pair_to_bytes(pair: tuple[str, str]) -> tuple[bytes, bytes]:
     """Converts a tuple of strings (characters) into a tuple of bytes."""
 
-    return tuple(b.encode("utf-8") for b in pair) # ('a', 'c') -> (b'a', b'c')
+    return tuple(b.encode("utf-8") for b in pair)  # ('a', 'c') -> (b'a', b'c')
 
 
 def train_bpe(
@@ -239,22 +243,24 @@ def train_bpe(
             counts, counts_to_words = count_bytepairs(
                 corpus, counts, counts_to_words, merged_words, removed_word_freqs
             )
-        
+
         # Check if there are any pairs left to merge
         if not counts:
             # No more pairs to merge, stop early
             break
-            
+
         # Get the most frequent pair
         mf_pair, mf_pair_words = get_mf_pair(counts, counts_to_words)
         # Add merge to merges
-        pair_b = pair_to_bytes(mf_pair) # convert to bytes
+        pair_b = pair_to_bytes(mf_pair)  # convert to bytes
         merges.append(pair_b)
         # Add the merge to the vocab
         merge_b = "".join(mf_pair)
         vocab[256 + i] = merge_b
         # Apply the merge to the corpus
-        corpus, merged_words, removed_word_freqs = merge(corpus, "".join(mf_pair), mf_pair_words)
+        corpus, merged_words, removed_word_freqs = merge(
+            corpus, "".join(mf_pair), mf_pair_words
+        )
 
     # Add special tokens to the vocab
     for i, token in enumerate(special_tokens):
@@ -264,8 +270,10 @@ def train_bpe(
 
 
 def save_vocab_n_merges(
-    vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]],
-    out_path_vocab, out_path_merges
+    vocab: dict[int, bytes],
+    merges: list[tuple[bytes, bytes]],
+    out_path_vocab,
+    out_path_merges,
 ) -> None:
     """
     Serializes the vocabulary and merges to JSON and text files respectively.
@@ -275,7 +283,7 @@ def save_vocab_n_merges(
     # Save vocab as json file
     with open(out_path_vocab, "w") as outfile:
         json.dump(vocab, outfile)
-    
+
     # Prepare merges in expected format
     merges_new = []
     for merge_pair in merges:
@@ -295,7 +303,12 @@ if __name__ == "__main__":
     out_merges_path = "tinystories_merges.txt"
     out_vocab_path = "tinystories_vocab.json"
 
-    vocab, merges = train_bpe(input_path, 50257, special_tokens = ["<|endoftext|>", "<start>", "<end>"], 
-                              out_vocab_path=out_vocab_path, out_merges_path=out_merges_path)
+    vocab, merges = train_bpe(
+        input_path,
+        50257,
+        special_tokens=["<|endoftext|>", "<start>", "<end>"],
+        out_vocab_path=out_vocab_path,
+        out_merges_path=out_merges_path,
+    )
 
     save_vocab_n_merges(vocab, merges)
