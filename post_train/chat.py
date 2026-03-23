@@ -7,8 +7,6 @@ from post_train.model import (
     DEFAULT_REPO_ID,
 )
 from post_train.tune import (
-    DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN,
-    DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
     get_tokenizer,
 )
 
@@ -152,7 +150,6 @@ def run_inference(
 
 if __name__ == "__main__":
     run_inference(
-        checkpoint_pattern=DEFAULT_POSTTRAINING_CHECKPOINT_PATTERN,
-        checkpoint_path=DEFAULT_POSTTRAINING_CHECKPOINT_PATH,
+        repo_id_subfolder=DEFAULT_POSTTRAINING_SUBFOLDER,
         max_new_tokens=256,
     )

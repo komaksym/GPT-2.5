@@ -34,6 +34,6 @@ flash-attn = [{ requirement = "torch", match-runtime = true }]
 extra-build-variables = { flash-attn = { MAX_JOBS = "2", NVCC_THREADS = "1" } }
 
 [tool.setuptools.packages.find]
-onclude = ["posttrain*", "pretrain*", "tokenizer*"]
+include = ["post_train*", "pre_train*", "tokenizer*"]
 exclude = ["checkpoints*", "data*", "dist*", "tests*", "trainer_output*", "wandb*"]
 namespaces = true
