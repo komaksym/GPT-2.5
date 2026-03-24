@@ -2,7 +2,7 @@ import logging
 
 import torch.nn.functional as F
 from huggingface_hub import snapshot_download
-from pre_train.model import GPTConfig, TransformerLM, load_checkpoint
+from ..pre_train.model import GPTConfig, TransformerLM, load_checkpoint
 from transformers import PreTrainedModel, PretrainedConfig
 from transformers.modeling_outputs import CausalLMOutput
 
