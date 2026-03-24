@@ -1,6 +1,7 @@
-from transformers import PretrainedConfig
-import torch
 from dataclasses import dataclass
+
+import torch
+from transformers import PretrainedConfig
 
 
 @dataclass
@@ -31,26 +32,87 @@ class MyConfig(PretrainedConfig):
     def __init__(
         self,
         vocab_size=GPTConfig.vocab_size,
-        context_length=GPTConfig.context_length,
-        num_layers=GPTConfig.num_layers,
-        num_heads=GPTConfig.num_heads,
-        d_model=GPTConfig.d_model,
-        d_ff=GPTConfig.d_ff,
+        context_length=None,
+        max_position_embeddings=None,
+        num_layers=None,
+        num_hidden_layers=None,
+        num_heads=None,
+        num_attention_heads=None,
+        num_key_value_heads=None,
+        d_model=None,
+        hidden_size=None,
+        d_ff=None,
+        intermediate_size=None,
         theta=GPTConfig.theta,
-        device=str(GPTConfig.device),
+        device=None,
         tie_word_embeddings=True,
         **kwargs,
     ):
         super().__init__(**kwargs, tie_word_embeddings=tie_word_embeddings)
+
         self.vocab_size = int(vocab_size)
-        self.context_length = int(context_length)
-        self.num_layers = int(num_layers)
-        self.num_heads = int(num_heads)
-        self.d_model = int(d_model)
-        self.d_ff = int(d_ff)
+        self.context_length = int(
+            context_length
+            if context_length is not None
+            else max_position_embeddings
+            if max_position_embeddings is not None
+            else GPTConfig.context_length
+        )
+        self.max_position_embeddings = self.context_length
+
+        self.num_layers = int(
+            num_layers
+            if num_layers is not None
+            else num_hidden_layers
+            if num_hidden_layers is not None
+            else GPTConfig.num_layers
+        )
+        self.num_hidden_layers = self.num_layers
+
+        self.num_heads = int(
+            num_heads
+            if num_heads is not None
+            else num_attention_heads
+            if num_attention_heads is not None
+            else GPTConfig.num_heads
+        )
+        self.num_attention_heads = self.num_heads
+
+        self.d_model = int(
+            d_model
+            if d_model is not None
+            else hidden_size
+            if hidden_size is not None
+            else GPTConfig.d_model
+        )
+        self.hidden_size = self.d_model
+
+        self.d_ff = int(
+            d_ff
+            if d_ff is not None
+            else intermediate_size
+            if intermediate_size is not None
+            else GPTConfig.d_ff
+        )
+        self.intermediate_size = self.d_ff
+
         self.theta = float(theta)
-        self.device = device if isinstance(device, str) else str(device)
-    
+        self.num_key_value_heads = int(
+            num_key_value_heads
+            if num_key_value_heads is not None
+            else self.num_attention_heads
+        )
+
+        if self.hidden_size % self.num_attention_heads != 0:
+            raise ValueError(
+                "hidden_size must be divisible by num_attention_heads for GPT-2.5."
+            )
+        self.head_dim = self.hidden_size // self.num_attention_heads
+
+        # Retain the legacy field for compatibility with older checkpoints, but
+        # runtime code must not rely on config-driven device placement.
+        self.device = None if device is None else str(device)
+
 
 if __name__ == "__main__":
     myconf = MyConfig()

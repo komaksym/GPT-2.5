@@ -6,12 +6,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, reduce
+from transformers import PreTrainedModel
+from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutput
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 import logging
 
-from transformers import PreTrainedModel
 from .configuration_gpt25 import MyConfig
-from transformers.modeling_outputs import CausalLMOutput
 
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,9 @@ class RMSNorm(nn.Module):
         in_dtype = x.dtype
         x = x.to(torch.float32)
         # Calculate RMS = sqrt(mean(x^2) + eps)
-        rms = torch.sqrt(1 / self.d_model * reduce(x**2, "B T C -> B T 1", "sum") + self.eps)
+        rms = torch.sqrt(
+            1 / self.d_model * reduce(x**2, "B T C -> B T 1", "sum") + self.eps
+        )
         # Normalize: x / RMS * gain_parameter
         rmsnorm = x / rms * self.weight
         # Downcast back to the initial dtype (e.g., bfloat16 or float16)
@@ -131,11 +133,19 @@ class SwiGLU(nn.Module):
         super().__init__()
         # Init d_ff dimension (typically 8/3 * d_model in Llama)
         self.d_ff = (8 / 3) * d_model if not d_ff else d_ff
-        assert self.d_ff % 64 == 0, "The dimensionality of the feedforward is not a multiple of 64"
+        assert self.d_ff % 64 == 0, (
+            "The dimensionality of the feedforward is not a multiple of 64"
+        )
         # w1 and w3 are for the gated part; w2 is for the projection back to d_model
-        self.w1 = nn.Parameter(data=torch.empty((d_ff, d_model), device=device, dtype=dtype))
-        self.w3 = nn.Parameter(data=torch.empty((d_ff, d_model), device=device, dtype=dtype))
-        self.w2 = nn.Parameter(data=torch.empty((d_model, d_ff), device=device, dtype=dtype))
+        self.w1 = nn.Parameter(
+            data=torch.empty((d_ff, d_model), device=device, dtype=dtype)
+        )
+        self.w3 = nn.Parameter(
+            data=torch.empty((d_ff, d_model), device=device, dtype=dtype)
+        )
+        self.w2 = nn.Parameter(
+            data=torch.empty((d_model, d_ff), device=device, dtype=dtype)
+        )
 
         nn.init.normal_(self.w1, mean=0.0, std=GPT_INIT_STD)
         nn.init.normal_(self.w3, mean=0.0, std=GPT_INIT_STD)
@@ -176,9 +186,9 @@ class RoPE(nn.Module):
         inv_freq = self.theta ** (-2.0 * j / float(self.d_k))  # (d_half,)
 
         # Compute angles for each position: angle = pos * freq
-        pos = torch.arange(self.max_seq_len, dtype=torch.float32, device=self.device).unsqueeze(
-            1
-        )  # (max_seq_len, 1)
+        pos = torch.arange(
+            self.max_seq_len, dtype=torch.float32, device=self.device
+        ).unsqueeze(1)  # (max_seq_len, 1)
         angles = pos * inv_freq.unsqueeze(0)  # (max_seq_len, d_half)
 
         # Precompute cos and sin buffers for the entire context window
@@ -192,7 +202,9 @@ class RoPE(nn.Module):
         token_positions: (..., seq_len)
         """
         if x.shape[-1] != self.d_k:
-            raise ValueError(f"Last dim of x must be d_k={self.d_k}, got {x.shape[-1]}.")
+            raise ValueError(
+                f"Last dim of x must be d_k={self.d_k}, got {x.shape[-1]}."
+            )
         if token_positions.shape[-1] != x.shape[-2]:
             raise ValueError(
                 "token_positions must have same seq_len in its last dim as x's sequence dimension."
@@ -212,13 +224,17 @@ class RoPE(nn.Module):
         x_rot_odd = x_even * sin_pos + x_odd * cos_pos
 
         # Recombine into the original d_k shape
-        x_rot = torch.stack([x_rot_even, x_rot_odd], dim=-1)  # (..., seq_len, d_half, 2)
+        x_rot = torch.stack(
+            [x_rot_even, x_rot_odd], dim=-1
+        )  # (..., seq_len, d_half, 2)
         new_shape = list(x.shape[:-2]) + [x.shape[-2], self.d_k]
         x_rot = x_rot.view(*new_shape)
         return x_rot
 
 
-def softmax(x: torch.Tensor, dim: int, is_log: bool = False, temp: float = 1.0) -> torch.Tensor:
+def softmax(
+    x: torch.Tensor, dim: int, is_log: bool = False, temp: float = 1.0
+) -> torch.Tensor:
     """
     Numerically stable Softmax or Log-Softmax implementation.
     Uses the LogSumExp trick to prevent overflow.
@@ -228,7 +244,9 @@ def softmax(x: torch.Tensor, dim: int, is_log: bool = False, temp: float = 1.0) 
 
     # LogSumExp trick: log(sum(exp(x_i))) = m + log(sum(exp(x_i - m))) where m = max(x)
     m = torch.max(x_scaled, dim=dim, keepdim=True).values
-    log_sum_exp = m + torch.log(torch.sum(torch.exp(x_scaled - m), dim=dim, keepdim=True))
+    log_sum_exp = m + torch.log(
+        torch.sum(torch.exp(x_scaled - m), dim=dim, keepdim=True)
+    )
 
     # log_softmax(x) = x - log_sum_exp(x)
     log_probs = x_scaled - log_sum_exp
@@ -355,6 +373,7 @@ class MultiheadSelfAttention(nn.Module):
         x: torch.Tensor,
         token_positions: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
+        **kwargs,
     ) -> torch.Tensor:
         # x: (B, T, d_model)
         Q = self.Wq(x)
@@ -399,6 +418,7 @@ class MultiheadSelfAttention(nn.Module):
                 attention_mask=attention_mask,
                 scaling=self.d_k**-0.5,
                 position_ids=token_positions,
+                **kwargs,
             )
         else:
             out, _ = attention_interface(
@@ -408,6 +428,7 @@ class MultiheadSelfAttention(nn.Module):
                 V,
                 attention_mask=packed_mask,
                 scaling=self.d_k**-0.5,
+                **kwargs,
             )
 
         # Concatenate heads: (B, T, num_heads, d_k) -> (B, T, d_model)
@@ -435,7 +456,9 @@ class TransformerBlock(nn.Module):
 
         self.norm_att = RMSNorm(d_model, device=device)
         self.norm_ff = RMSNorm(d_model, device=device)
-        self.mhsa = MultiheadSelfAttention(d_model, num_heads, theta, max_seq_len, device)
+        self.mhsa = MultiheadSelfAttention(
+            d_model, num_heads, theta, max_seq_len, device
+        )
         self.ffn = SwiGLU(d_model, d_ff, device=device)
 
     def set_attn_implementation(self, attn_implementation: str) -> None:
@@ -446,12 +469,14 @@ class TransformerBlock(nn.Module):
         x: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
+        **kwargs,
     ) -> torch.Tensor:
         # Pre-Norm + Self-Attention + Residual connection
         attn = x + self.mhsa(
             self.norm_att(x),
             token_positions=position_ids,
             attention_mask=attention_mask,
+            **kwargs,
         )
         # Pre-Norm + Feed-Forward + Residual connection
         ffwd = attn + self.ffn(self.norm_ff(attn))
@@ -480,7 +505,9 @@ class TransformerLM(nn.Module):
 
         self.emb = Embedding(vocab_size, d_model, device=device)
         self.tblocks = nn.ModuleList(
-            TransformerBlock(d_model, num_heads, d_ff, theta, context_length, device=device)
+            TransformerBlock(
+                d_model, num_heads, d_ff, theta, context_length, device=device
+            )
             for _ in range(num_layers)
         )
         self.norm = RMSNorm(d_model, device=device)
@@ -493,30 +520,51 @@ class TransformerLM(nn.Module):
         for tblock in self.tblocks:
             tblock.set_attn_implementation(attn_implementation)
 
+    def forward_hidden_states(
+        self,
+        input_ids: torch.Tensor | None = None,
+        inputs_embeds: torch.Tensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        if (input_ids is None) == (inputs_embeds is None):
+            raise ValueError("Provide exactly one of input_ids or inputs_embeds.")
+
+        emb = self.emb(input_ids) if inputs_embeds is None else inputs_embeds
+
+        for tblock in self.tblocks:
+            emb = tblock(
+                emb,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                **kwargs,
+            )
+
+        return self.norm(emb)
+
     def forward(
         self,
-        x: torch.Tensor,
+        input_ids: torch.Tensor | None = None,
         targets: Optional[torch.Tensor] = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
+        inputs_embeds: torch.Tensor | None = None,
+        **kwargs,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
-        Input: x (token IDs) shape (B, T)
+        Input: input_ids (token IDs) shape (B, T)
         Targets: Optional ground truth token IDs for loss calculation.
         Returns: (logits, loss)
         """
-        # (B, T) -> (B, T, d_model)
-        emb = self.emb(x)
-
-        # Pass embedding through N transformer blocks
-        for tblock in self.tblocks:
-            emb = tblock(emb, attention_mask=attention_mask, position_ids=position_ids)
-
-        # Final RMS Normalization
-        normed = self.norm(emb)
-
-        # Pass through linear head to get logits: (B, T, d_model) -> (B, T, vocab_size)
-        logits = self.linear(normed)
+        hidden_states = self.forward_hidden_states(
+            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            **kwargs,
+        )
+        logits = self.linear(hidden_states)
 
         loss = None
         if targets is not None:
@@ -548,15 +596,17 @@ def cross_entropy_loss(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Ten
     return loss
 
 
-class HFTransformerLM(PreTrainedModel):
+class GPT25Model(PreTrainedModel):
     config_class = MyConfig
+    base_model_prefix = "model"
     _tied_weights_keys = {"model.linear.weight": "model.emb.weight"}
     _supports_flash_attn = True
+    _supports_attention_backend = True
     _supports_flash_attn_2 = True
     _supports_sdpa = True
 
     def __init__(self, config):
-        """Expose TransformerLM through the minimal HF interface used by Trainer."""
+        """Base GPT-2.5 model exposed through the HF AutoModel contract."""
         super().__init__(config)
         self.model = TransformerLM(
             config.vocab_size,
@@ -566,7 +616,6 @@ class HFTransformerLM(PreTrainedModel):
             config.num_heads,
             config.d_ff,
             config.theta,
-            config.device,
         )
         self._sync_attn_implementation()
         self.post_init()
@@ -601,7 +650,10 @@ class HFTransformerLM(PreTrainedModel):
             )
 
     def _get_runtime_attn_implementation(self) -> str:
-        return self.config._attn_implementation.removeprefix("paged|")
+        attn_implementation = (
+            getattr(self.config, "_attn_implementation", None) or "sdpa"
+        )
+        return attn_implementation.removeprefix("paged|")
 
     def _sync_attn_implementation(self) -> None:
         self.model.set_attn_implementation(self._get_runtime_attn_implementation())
@@ -627,15 +679,51 @@ class HFTransformerLM(PreTrainedModel):
         input_ids=None,
         attention_mask=None,
         position_ids=None,
-        labels=None,
+        inputs_embeds=None,
+        return_dict=None,
         **kwargs,
     ):
+        return_dict = (
+            self.config.use_return_dict if return_dict is None else return_dict
+        )
         self._sync_attn_implementation()
-        logits, _ = self.model(
-            input_ids,
+        hidden_states = self.model.forward_hidden_states(
+            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            **kwargs,
         )
+
+        if return_dict is False:
+            return (hidden_states,)
+
+        return BaseModelOutputWithPast(last_hidden_state=hidden_states)
+
+
+class GPT25ForCausalLM(GPT25Model):
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        position_ids=None,
+        inputs_embeds=None,
+        labels=None,
+        return_dict=None,
+        **kwargs,
+    ):
+        return_dict = (
+            self.config.use_return_dict if return_dict is None else return_dict
+        )
+        self._sync_attn_implementation()
+        hidden_states = self.model.forward_hidden_states(
+            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            **kwargs,
+        )
+        logits = self.model.linear(hidden_states)
 
         loss = None
         if labels is not None:
@@ -647,4 +735,12 @@ class HFTransformerLM(PreTrainedModel):
                 ignore_index=-100,
             )
 
+        if return_dict is False:
+            if loss is None:
+                return (logits,)
+            return (loss, logits)
+
         return CausalLMOutput(loss=loss, logits=logits)
+
+
+HFTransformerLM = GPT25ForCausalLM
