@@ -1,5 +1,4 @@
 from contextlib import asynccontextmanager
-import os
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
@@ -18,7 +17,7 @@ from serving.inference import (
 
 
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant"]
+    role: Literal["user", "system", "assistant"]
     content: str = Field(min_length=1)
 
 
@@ -60,9 +59,7 @@ async def chat(request: Request, payload: ChatRequest) -> ChatResponse:
 
 def main() -> None:
     uvicorn.run(
-        "serving.main:app",
-        host=os.environ.get("HOST", "0.0.0.0"),
-        port=int(os.environ.get("PORT", "8080")),
+        "main:app",
     )
 
 
