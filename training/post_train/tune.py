@@ -71,7 +71,11 @@ def configure_packed_attention(model) -> None:
 
 
 def get_tokenizer(tokenizer_path="gpt2"):
-    extra_special_tokens = ["<|user|>", "<|assistant|>", "<|system|>"]
+    extra_special_tokens = {
+        "user_token": "<|user|>",
+        "assistant_token": "<|assistant|>",
+        "system_token": "<|system|>",
+    }
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path, extra_special_tokens=extra_special_tokens
     )
