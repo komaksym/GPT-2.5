@@ -32,16 +32,33 @@ def test_get_tokenizer_sets_pad_token_and_chat_template(monkeypatch):
         chat_template = None
 
     fake_tokenizer = FakeTokenizer()
+    calls = {}
 
     monkeypatch.setattr(
         tune.AutoTokenizer,
         "from_pretrained",
-        lambda tokenizer_path, extra_special_tokens=None: fake_tokenizer,
+        lambda tokenizer_path, extra_special_tokens=None: (
+            calls.update(
+                {
+                    "tokenizer_path": tokenizer_path,
+                    "extra_special_tokens": extra_special_tokens,
+                }
+            )
+            or fake_tokenizer
+        ),
     )
 
     tokenizer = tune.get_tokenizer(tokenizer_path="gpt2")
 
     assert tokenizer is fake_tokenizer
+    assert calls == {
+        "tokenizer_path": "gpt2",
+        "extra_special_tokens": {
+            "user_token": "<|user|>",
+            "assistant_token": "<|assistant|>",
+            "system_token": "<|system|>",
+        },
+    }
     assert tokenizer.pad_token == tokenizer.eos_token
     assert "<|assistant|>" in tokenizer.chat_template
     assert "{% generation %}" in tokenizer.chat_template
