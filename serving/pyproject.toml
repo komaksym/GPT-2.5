@@ -13,3 +13,14 @@ dependencies = [
     "transformers==5.2.0",
     "uvicorn>=0.38.0",
 ]
+
+[project.optional-dependencies]
+gpu = [
+    "flash-attn>=2.8.3; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+[tool.uv.extra-build-dependencies]
+flash-attn = [{ requirement = "torch", match-runtime = true }]
+
+[tool.uv]
+extra-build-variables = { flash-attn = { MAX_JOBS = "2", NVCC_THREADS = "1" } }
