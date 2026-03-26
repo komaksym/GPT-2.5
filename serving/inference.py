@@ -39,6 +39,18 @@ def get_inference_dtype(device: torch.device) -> torch.dtype | None:
     return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
 
+def configure_attention_backend(model: PreTrainedModel, device: torch.device) -> None:
+    if not hasattr(model, "set_attn_implementation"):
+        return
+
+    preferred_backend = "flash_attention_2" if device.type == "cuda" else "sdpa"
+    try:
+        model.set_attn_implementation(preferred_backend)
+    except (RuntimeError, ValueError):
+        if preferred_backend != "sdpa":
+            model.set_attn_implementation("sdpa")
+
+
 def get_context_length(model: PreTrainedModel) -> int:
     for attr in ("context_length", "max_position_embeddings", "n_positions"):
         value = getattr(model.config, attr, None)
@@ -59,6 +71,7 @@ def load_inference_resources(repo_id: str | None = None) -> InferenceResources:
     if inference_dtype is not None:
         model_kwargs["torch_dtype"] = inference_dtype
     model = AutoModelForCausalLM.from_pretrained(resolved_repo_id, **model_kwargs)
+    configure_attention_backend(model, device)
     model.eval()
     model.to(device)
     return InferenceResources(

@@ -10,12 +10,16 @@ class FakeModel:
         self.config = SimpleNamespace(max_position_embeddings=64)
         self.eval_called = False
         self.to_device = None
+        self.attn_implementations = []
 
     def eval(self):
         self.eval_called = True
 
     def to(self, device):
         self.to_device = device
+
+    def set_attn_implementation(self, attn_implementation):
+        self.attn_implementations.append(attn_implementation)
 
 
 def test_load_inference_resources_uses_cuda_inference_dtype(monkeypatch):
@@ -83,3 +87,26 @@ def test_load_inference_resources_omits_torch_dtype_off_cuda(monkeypatch):
 
     assert captured["kwargs"] == {"trust_remote_code": True}
     assert resources.model is fake_model
+
+
+def test_configure_attention_backend_prefers_flash_attention_on_cuda():
+    fake_model = FakeModel()
+
+    inference.configure_attention_backend(fake_model, torch.device("cuda"))
+
+    assert fake_model.attn_implementations == ["flash_attention_2"]
+
+
+def test_configure_attention_backend_falls_back_to_sdpa():
+    fake_model = FakeModel()
+
+    def flaky_set_attn_implementation(attn_implementation):
+        fake_model.attn_implementations.append(attn_implementation)
+        if attn_implementation == "flash_attention_2":
+            raise RuntimeError("flash unavailable")
+
+    fake_model.set_attn_implementation = flaky_set_attn_implementation
+
+    inference.configure_attention_backend(fake_model, torch.device("cuda"))
+
+    assert fake_model.attn_implementations == ["flash_attention_2", "sdpa"]
