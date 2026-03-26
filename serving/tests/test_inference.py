@@ -38,6 +38,108 @@ class FakeTokenizer:
         return {}
 
 
+def test_get_torch_compile_mode_defaults_to_disabled(monkeypatch):
+    """Leave torch.compile disabled unless the flag or env enables it."""
+    monkeypatch.delenv(inference.TORCH_COMPILE_ENV, raising=False)
+
+    assert inference.get_torch_compile_mode() is None
+
+
+def test_get_torch_compile_mode_uses_explicit_mode_when_enabled():
+    """Prefer the caller-supplied compile mode when compilation is enabled."""
+    assert (
+        inference.get_torch_compile_mode(
+            use_torch_compile=True, torch_compile_mode="max-autotune"
+        )
+        == "max-autotune"
+    )
+
+
+def test_load_inference_resources_applies_torch_compile(monkeypatch):
+    """Wrap the model with torch.compile when the compile flag is enabled."""
+    fake_model = FakeModel()
+    fake_tokenizer = FakeTokenizer()
+    compiled_model = object()
+
+    monkeypatch.setattr(inference, "get_device", lambda: torch.device("cuda"))
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
+    monkeypatch.setattr(
+        inference.AutoTokenizer,
+        "from_pretrained",
+        lambda repo_id, trust_remote_code=True: fake_tokenizer,
+    )
+    monkeypatch.setattr(
+        inference.AutoModelForCausalLM,
+        "from_pretrained",
+        lambda repo_id, **kwargs: fake_model,
+    )
+
+    def fake_compile(model, mode, dynamic):
+        assert model is fake_model
+        assert mode == "max-autotune-no-cudagraphs"
+        assert dynamic is True
+        return compiled_model
+
+    monkeypatch.setattr(torch, "compile", fake_compile)
+
+    resources = inference.load_inference_resources(
+        "repo/example",
+        use_torch_compile=True,
+    )
+
+    assert resources.model is compiled_model
+    assert resources.torch_compile_mode == "max-autotune-no-cudagraphs"
+
+
+def test_mark_compile_step_begin_is_noop_when_compile_is_disabled(monkeypatch):
+    """Skip cudagraph step markers when torch.compile is not active."""
+    calls = []
+    monkeypatch.setattr(
+        torch.compiler,
+        "cudagraph_mark_step_begin",
+        lambda: calls.append("step"),
+    )
+
+    resources = inference.InferenceResources(
+        model=object(),
+        tokenizer=FakeTokenizer(),
+        device=torch.device("cpu"),
+        inference_dtype=None,
+        attention_backend="sdpa",
+        context_length=8,
+        stop_token_ids=set(),
+    )
+
+    inference._mark_compile_step_begin(resources)
+
+    assert calls == []
+
+
+def test_mark_compile_step_begin_marks_compiled_steps(monkeypatch):
+    """Mark cudagraph step boundaries when torch.compile is enabled."""
+    calls = []
+    monkeypatch.setattr(
+        torch.compiler,
+        "cudagraph_mark_step_begin",
+        lambda: calls.append("step"),
+    )
+
+    resources = inference.InferenceResources(
+        model=object(),
+        tokenizer=FakeTokenizer(),
+        device=torch.device("cuda"),
+        inference_dtype=torch.bfloat16,
+        attention_backend="sdpa",
+        context_length=8,
+        stop_token_ids=set(),
+        torch_compile_mode="max-autotune-no-cudagraphs",
+    )
+
+    inference._mark_compile_step_begin(resources)
+
+    assert calls == ["step"]
+
+
 def test_load_inference_resources_uses_cuda_inference_dtype(monkeypatch):
     """Use CUDA-specific dtype selection when loading inference resources."""
     captured = {}
@@ -71,6 +173,7 @@ def test_load_inference_resources_uses_cuda_inference_dtype(monkeypatch):
     assert resources.device == torch.device("cuda")
     assert resources.inference_dtype == torch.bfloat16
     assert resources.attention_backend == "sdpa"
+    assert resources.torch_compile_mode is None
     assert resources.stop_token_ids == set()
     assert captured == {
         "repo_id": "repo/example",
@@ -116,6 +219,7 @@ def test_load_inference_resources_omits_torch_dtype_off_cuda(monkeypatch):
     assert resources.model is fake_model
     assert resources.inference_dtype is None
     assert resources.attention_backend == "sdpa"
+    assert resources.torch_compile_mode is None
     assert resources.stop_token_ids == set()
 
 
