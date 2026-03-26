@@ -9,4 +9,6 @@ git config --global user.name "komaksym"
 
 uv run --project training prek install \
   --hook-type pre-commit \
+  --hook-type commit-msg \
+  --hook-type pre-push \
   --prepare-hooks
