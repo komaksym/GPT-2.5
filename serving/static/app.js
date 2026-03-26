@@ -1,3 +1,5 @@
+const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant developed by Koma Labs.";
+
 const state = {
   messages: [],
   draft: "",
@@ -187,7 +189,13 @@ async function sendMessage(promptOverride) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        messages: state.messages.map(({ role, content }) => ({ role, content })),
+        messages: [
+          {
+            role: "system",
+            content: DEFAULT_SYSTEM_PROMPT,
+          },
+          ...state.messages.map(({ role, content }) => ({ role, content })),
+        ],
       }),
       signal: activeController.signal,
     });

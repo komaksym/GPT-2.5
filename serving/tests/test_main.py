@@ -48,6 +48,7 @@ def test_static_assets_are_served(monkeypatch):
 
     assert js_response.status_code == 200
     assert "javascript" in js_response.headers["content-type"]
+    assert "You are a helpful assistant developed by Koma Labs." in js_response.text
 
 
 def test_chat_returns_generated_response(monkeypatch):
