@@ -22,6 +22,15 @@ def test_root_serves_app_shell(monkeypatch):
     assert (
         "https://cdn.tailwindcss.com?plugins=forms,container-queries" in response.text
     )
+    assert 'href="/static/app.css"' in response.text
+    assert 'src="/static/app.js"' in response.text
+    assert 'id="message-input"' in response.text
+    assert 'id="send-button"' in response.text
+    assert 'id="new-chat-button"' in response.text
+    assert 'id="chat-view"' in response.text
+    assert 'id="chat-messages"' in response.text
+    assert 'data-prompt="Explain quantum computing in simple terms"' in response.text
+    assert 'data-prompt="Write a Python script for data cleaning"' in response.text
 
 
 def test_static_assets_are_served(monkeypatch):
