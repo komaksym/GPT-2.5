@@ -1,16 +1,27 @@
-from pre_train.model import GPTConfig, softmax, top_p_sampling
-from transformers import PythonBackend
+from contextlib import nullcontext
 import sys
-import torch
-from post_train.model import (
-    HFTransformerLM,
-    DEFAULT_REPO_ID,
-)
-from post_train.tune import (
-    get_tokenizer,
-)
 
-DEFAULT_POSTTRAINING_SUBFOLDER = "posttraining_checkpoint"
+from pre_train.model import GPTConfig, softmax, top_p_sampling
+import torch
+from post_train.model import HFTransformerLM
+from transformers import AutoTokenizer
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
+DEFAULT_REPO_ID = "itskoma/MyGPT"
+STOP_WORDS = {"<|endoftext|>", "<|user|>", "<|system|>", "<|assistant|>"}
+
+
+def _autocast_context(device: torch.device):
+    """Return the inference autocast context for the selected device."""
+    if device.type != "cuda":
+        return nullcontext()
+    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    return torch.autocast(device_type=device.type, dtype=dtype)
+
+
+def load_tokenizer(repo_id: str) -> PreTrainedTokenizerBase:
+    """Load the chat tokenizer from a Hugging Face repo."""
+    return AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
 
 
 @torch.inference_mode()
@@ -19,7 +30,7 @@ def generate(
     max_tokens: int | None = None,
     context_length: int = GPTConfig.context_length,
     model: HFTransformerLM | None = None,
-    tokenizer: PythonBackend = None,
+    tokenizer: PreTrainedTokenizerBase | None = None,
     temp: float = 0.9,
     top_p: float = 0.8,
     device: torch.device | None = None,
@@ -30,61 +41,53 @@ def generate(
     context: chat context (previous user prompts and responses)
     max_tokens: number of tokens to generate per sequence
     context_length: maximum window size the model can handle
-    batch_size: number of responses to generate
     model: the transformer model
     temp: softmax temperature
     top_p: nucleus sampling threshold
     """
     if model is None:
         raise ValueError("model must be provided")
+    if tokenizer is None:
+        raise ValueError("tokenizer must be provided")
 
     token_limit = max_tokens if max_tokens is not None else max_new_tokens
     if token_limit is None:
         raise ValueError("Either max_tokens or max_new_tokens must be provided")
 
-    stop_words = ["<|endoftext|>", "<|user|>", "<|system|>"]
-    stop_reason = ""
-
-    response_tokens = []
     inputs = tokenizer.apply_chat_template(
         context, tokenize=True, add_generation_prompt=True, return_tensors="pt"
     )
-    if len(inputs) > 1:
+    if hasattr(inputs, "input_ids"):
         inputs = inputs.input_ids
     inputs = inputs.to(device=device)
 
+    response_tokens = []
     for _ in range(token_limit):
         if inputs.shape[-1] > context_length:
             inputs = inputs[:, -context_length:]
-        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+        with _autocast_context(device):
             logits = model(inputs).logits
         probs = softmax(logits[:, -1, :], dim=-1, temp=temp)
         next_token = top_p_sampling(probs, p=top_p)
-        decoded_next_tok = tokenizer.decode([next_token.item()])
-        if decoded_next_tok in stop_words:
-            stop_reason = f"STOPWORD: {decoded_next_tok}."
+        decoded_next_token = tokenizer.decode([next_token.item()])
+        if decoded_next_token in STOP_WORDS:
             break
         inputs = torch.cat((inputs, next_token), dim=1)
         response_tokens.append(next_token.item())
 
-    if not stop_reason:
-        stop_reason = "MAX TOKEN LIMIT EXCEEDED."
-
-    ctx_before_response = tokenizer.decode(inputs)[0].split("<|assistant|>")[:-1]
-    print(f"CONTEXT SEEN BY THE MODEL:\n {ctx_before_response}\n")
     answer = tokenizer.decode(response_tokens)
-    return answer.strip(), stop_reason
+    return answer.strip()
 
 
 def chat(
     model,
-    tokenizer: PythonBackend = None,
+    tokenizer: PreTrainedTokenizerBase | None = None,
     context_length: int = 1024,
     max_new_tokens: int = 128,
     temp: float = 0.9,
     top_p: float = 0.8,
-    device: torch.device = None,
-) -> list[str]:
+    device: torch.device | None = None,
+) -> None:
     """Accept either the HF wrapper or the raw model and delegate generation."""
     assert max_new_tokens < context_length, (
         "Number of new generated tokens should be < context_length"
@@ -99,12 +102,11 @@ def chat(
         print("#" * 20, f"Ask anything. To end, type {stop_word}", "#" * 20)
         sys.stdout.write("\nPROMPT: ")
         user_input = input()
-        # user_input = "Hello, how are you?" # OVERRIDE (REMOVE LATER)
         if user_input == stop_word:
             break
         print(waiting_for_response_schema)
         context.append({"content": user_input, "role": "user"})
-        response, stop_reason = generate(
+        response = generate(
             context=context,
             max_new_tokens=max_new_tokens,
             context_length=context_length,
@@ -114,28 +116,27 @@ def chat(
             top_p=top_p,
             device=device,
         )
-        print("RESPONSE: ", response, f"\nSTOP REASON: {stop_reason}", end="\n" * 2)
+        print("RESPONSE: ", response, end="\n" * 2)
         context.append({"content": response, "role": "assistant"})
 
 
 def run_inference(
     repo_id: str = DEFAULT_REPO_ID,
-    repo_id_subfolder: str = DEFAULT_POSTTRAINING_SUBFOLDER,
-    tokenizer: PythonBackend = None,
-    context_length=GPTConfig.context_length,
+    tokenizer: PreTrainedTokenizerBase | None = None,
+    context_length: int = GPTConfig.context_length,
     max_new_tokens: int = 128,
     temp: float = 0.9,
     top_p: float = 0.8,
     device: torch.device | None = None,
 ):
-    model = HFTransformerLM.from_pretrained(repo_id, subfolder=repo_id_subfolder)
+    """Load the post-trained model and start the interactive chat loop."""
+    model = HFTransformerLM.from_pretrained(repo_id)
 
     device = GPTConfig.device if device is None else device
     model.tie_weights()
     model.to(device)
-    # model = torch.compile(model, mode="default")
 
-    tokenizer = get_tokenizer()
+    tokenizer = tokenizer or load_tokenizer(repo_id)
 
     chat(
         model=model,
@@ -149,7 +150,4 @@ def run_inference(
 
 
 if __name__ == "__main__":
-    run_inference(
-        repo_id_subfolder=DEFAULT_POSTTRAINING_SUBFOLDER,
-        max_new_tokens=256,
-    )
+    run_inference(max_new_tokens=256)

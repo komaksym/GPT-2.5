@@ -9,7 +9,7 @@ import wandb
 from post_train.model import (
     DEFAULT_REPO_ID,
     DEFAULT_CHECKPOINT_SUBFOLDER,
-    HFTransformerLM
+    HFTransformerLM,
 )
 from datasets import load_dataset
 from transformers import AutoTokenizer
@@ -25,11 +25,13 @@ PACKING = True
 
 
 def compute_metrics(eval_pred):
+    """Convert evaluation losses into a perplexity metric."""
     mean_loss = float(np.mean(eval_pred.losses))
     return {"perplexity": np.exp(mean_loss)}
 
 
 def is_flash_attn_2_installed() -> bool:
+    """Return whether FlashAttention 2 can be imported in this environment."""
     if find_spec("flash_attn") is None:
         return False
     try:
@@ -40,6 +42,7 @@ def is_flash_attn_2_installed() -> bool:
 
 
 def get_training_dtype() -> torch.dtype:
+    """Pick the most appropriate training dtype for the current device."""
     if not torch.cuda.is_available():
         return torch.float32
     if torch.cuda.is_bf16_supported():
@@ -48,6 +51,7 @@ def get_training_dtype() -> torch.dtype:
 
 
 def get_trainer_precision_kwargs(dtype: torch.dtype) -> dict[str, bool]:
+    """Translate a torch dtype into Trainer precision keyword arguments."""
     if dtype is torch.bfloat16:
         return {"bf16": True}
     if dtype is torch.float16:
@@ -56,6 +60,7 @@ def get_trainer_precision_kwargs(dtype: torch.dtype) -> dict[str, bool]:
 
 
 def configure_packed_attention(model) -> None:
+    """Enable the fastest safe attention backend for packed SFT batches."""
     if not PACKING:
         return
 
@@ -71,12 +76,19 @@ def configure_packed_attention(model) -> None:
 
 
 def get_tokenizer(tokenizer_path="gpt2"):
-    extra_special_tokens = ["<|user|>", "<|assistant|>", "<|system|>"]
+    """Load the tokenizer and install the chat template used for SFT."""
+    extra_special_tokens = {
+        "user_token": "<|user|>",
+        "assistant_token": "<|assistant|>",
+        "system_token": "<|system|>",
+    }
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path, extra_special_tokens=extra_special_tokens
     )
     tokenizer.pad_token = tokenizer.eos_token
 
+    # Mark assistant spans as generation blocks so TRL can compute loss only on
+    # the tokens the model is meant to produce.
     tokenizer.chat_template = (
         "{% for message in messages %}"
         "{{ '<|' + message['role'] + '|>\\n' }}"
@@ -152,6 +164,6 @@ def main(
     )
     trainer.train()
 
-   
+
 if __name__ == "__main__":
     main()

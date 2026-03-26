@@ -1,0 +1,371 @@
+{
+  "metadata": {
+    "timestamp_utc": "2026-03-26T17:31:37+00:00",
+    "repo_id": "itskoma/MyGPT",
+    "device": "cuda",
+    "inference_dtype": "bfloat16",
+    "attention_backend": "sdpa",
+    "warmup_runs": 3,
+    "runs": 10,
+    "max_new_tokens": 128,
+    "temp": 0.9,
+    "top_p": 0.8,
+    "startup_mode": "cached"
+  },
+  "startup": {
+    "startup_seconds": 1.4910255830036476
+  },
+  "overall": {
+    "run_count": 30,
+    "prompt_tokens": 16,
+    "median_generated_tokens": 57.5,
+    "median_latency_seconds": 0.7799382900047931,
+    "p95_latency_seconds": 1.7244288070534821,
+    "median_decode_tokens_per_second": 73.21942040984304,
+    "p95_decode_tokens_per_second": 74.30166872688915,
+    "median_total_tokens_per_second": 100.13094898973432,
+    "median_peak_gpu_memory_bytes": 271977984
+  },
+  "cases": [
+    {
+      "name": "short_prompt",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Explain GPT-2 in one sentence."
+        }
+      ],
+      "summary": {
+        "run_count": 10,
+        "prompt_tokens": 16,
+        "median_generated_tokens": 42.5,
+        "median_latency_seconds": 0.5810091425009887,
+        "p95_latency_seconds": 0.9536210423961164,
+        "median_decode_tokens_per_second": 73.14880348067214,
+        "p95_decode_tokens_per_second": 73.54478352327199,
+        "median_total_tokens_per_second": 100.69106709705899,
+        "median_peak_gpu_memory_bytes": 268670976
+      },
+      "runs": [
+        {
+          "run_index": 0,
+          "prompt_tokens": 16,
+          "generated_tokens": 37,
+          "latency_seconds": 0.5074676749936771,
+          "decode_tokens_per_second": 72.91104798046696,
+          "total_tokens_per_second": 104.44014980985807,
+          "peak_gpu_memory_bytes": 268062720
+        },
+        {
+          "run_index": 1,
+          "prompt_tokens": 16,
+          "generated_tokens": 44,
+          "latency_seconds": 0.6004849370074226,
+          "decode_tokens_per_second": 73.27411111972009,
+          "total_tokens_per_second": 99.91924243598194,
+          "peak_gpu_memory_bytes": 268837888
+        },
+        {
+          "run_index": 2,
+          "prompt_tokens": 16,
+          "generated_tokens": 24,
+          "latency_seconds": 0.33328372599498834,
+          "decode_tokens_per_second": 72.01071677997531,
+          "total_tokens_per_second": 120.01786129995885,
+          "peak_gpu_memory_bytes": 266625024
+        },
+        {
+          "run_index": 3,
+          "prompt_tokens": 16,
+          "generated_tokens": 61,
+          "latency_seconds": 0.926200271002017,
+          "decode_tokens_per_second": 65.86048601994759,
+          "total_tokens_per_second": 83.13536759895022,
+          "peak_gpu_memory_bytes": 270744576
+        },
+        {
+          "run_index": 4,
+          "prompt_tokens": 16,
+          "generated_tokens": 72,
+          "latency_seconds": 0.9760562189912889,
+          "decode_tokens_per_second": 73.76624276254172,
+          "total_tokens_per_second": 90.15874115421765,
+          "peak_gpu_memory_bytes": 271977984
+        },
+        {
+          "run_index": 5,
+          "prompt_tokens": 16,
+          "generated_tokens": 42,
+          "latency_seconds": 0.5740330490079941,
+          "decode_tokens_per_second": 73.16651902287093,
+          "total_tokens_per_second": 101.03947865063128,
+          "peak_gpu_memory_bytes": 268615680
+        },
+        {
+          "run_index": 6,
+          "prompt_tokens": 16,
+          "generated_tokens": 30,
+          "latency_seconds": 0.4140511939913267,
+          "decode_tokens_per_second": 72.45480857284623,
+          "total_tokens_per_second": 111.0973731450309,
+          "peak_gpu_memory_bytes": 267288576
+        },
+        {
+          "run_index": 7,
+          "prompt_tokens": 16,
+          "generated_tokens": 45,
+          "latency_seconds": 0.614283274000627,
+          "decode_tokens_per_second": 73.25610496754966,
+          "total_tokens_per_second": 99.30272006712288,
+          "peak_gpu_memory_bytes": 268950016
+        },
+        {
+          "run_index": 8,
+          "prompt_tokens": 16,
+          "generated_tokens": 41,
+          "latency_seconds": 0.5602414220047649,
+          "decode_tokens_per_second": 73.18273585213642,
+          "total_tokens_per_second": 101.74185228223844,
+          "peak_gpu_memory_bytes": 268505088
+        },
+        {
+          "run_index": 9,
+          "prompt_tokens": 16,
+          "generated_tokens": 43,
+          "latency_seconds": 0.5879852359939832,
+          "decode_tokens_per_second": 73.13108793847336,
+          "total_tokens_per_second": 100.3426555434867,
+          "peak_gpu_memory_bytes": 268726272
+        }
+      ]
+    },
+    {
+      "name": "coding_prompt",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a short Python function that checks whether a string is a palindrome."
+        }
+      ],
+      "summary": {
+        "run_count": 10,
+        "prompt_tokens": 22,
+        "median_generated_tokens": 124.0,
+        "median_latency_seconds": 1.6684369649956352,
+        "p95_latency_seconds": 1.7425621263966604,
+        "median_decode_tokens_per_second": 74.18179075945633,
+        "p95_decode_tokens_per_second": 74.37058149767176,
+        "median_total_tokens_per_second": 87.05457931259133,
+        "median_peak_gpu_memory_bytes": 278481920
+      },
+      "runs": [
+        {
+          "run_index": 0,
+          "prompt_tokens": 22,
+          "generated_tokens": 128,
+          "latency_seconds": 1.7252226569980849,
+          "decode_tokens_per_second": 74.19332193487539,
+          "total_tokens_per_second": 86.94529914243209,
+          "peak_gpu_memory_bytes": 278930432
+        },
+        {
+          "run_index": 1,
+          "prompt_tokens": 22,
+          "generated_tokens": 128,
+          "latency_seconds": 1.756748964995495,
+          "decode_tokens_per_second": 72.86186162650066,
+          "total_tokens_per_second": 85.38499409355545,
+          "peak_gpu_memory_bytes": 278930432
+        },
+        {
+          "run_index": 2,
+          "prompt_tokens": 22,
+          "generated_tokens": 118,
+          "latency_seconds": 1.5909341650112765,
+          "decode_tokens_per_second": 74.1702595840373,
+          "total_tokens_per_second": 87.99861306580696,
+          "peak_gpu_memory_bytes": 277809152
+        },
+        {
+          "run_index": 3,
+          "prompt_tokens": 22,
+          "generated_tokens": 112,
+          "latency_seconds": 1.5472080040053697,
+          "decode_tokens_per_second": 72.38845695605082,
+          "total_tokens_per_second": 86.60761814384651,
+          "peak_gpu_memory_bytes": 277136384
+        },
+        {
+          "run_index": 4,
+          "prompt_tokens": 22,
+          "generated_tokens": 128,
+          "latency_seconds": 1.7226555890083546,
+          "decode_tokens_per_second": 74.30388338604764,
+          "total_tokens_per_second": 87.07486334302459,
+          "peak_gpu_memory_bytes": 278930432
+        },
+        {
+          "run_index": 5,
+          "prompt_tokens": 22,
+          "generated_tokens": 128,
+          "latency_seconds": 1.7234585460100789,
+          "decode_tokens_per_second": 74.26926530744154,
+          "total_tokens_per_second": 87.03429528215806,
+          "peak_gpu_memory_bytes": 278930432
+        },
+        {
+          "run_index": 6,
+          "prompt_tokens": 22,
+          "generated_tokens": 108,
+          "latency_seconds": 1.5611801319901133,
+          "decode_tokens_per_second": 69.17843609905994,
+          "total_tokens_per_second": 83.27033974886844,
+          "peak_gpu_memory_bytes": 276687872
+        },
+        {
+          "run_index": 7,
+          "prompt_tokens": 22,
+          "generated_tokens": 98,
+          "latency_seconds": 1.3273791219980922,
+          "decode_tokens_per_second": 73.82969821951204,
+          "total_tokens_per_second": 90.40371210552495,
+          "peak_gpu_memory_bytes": 275566080
+        },
+        {
+          "run_index": 8,
+          "prompt_tokens": 22,
+          "generated_tokens": 128,
+          "latency_seconds": 1.7198486720008077,
+          "decode_tokens_per_second": 74.42515267990967,
+          "total_tokens_per_second": 87.21697579676915,
+          "peak_gpu_memory_bytes": 278930432
+        },
+        {
+          "run_index": 9,
+          "prompt_tokens": 22,
+          "generated_tokens": 120,
+          "latency_seconds": 1.6170252579904627,
+          "decode_tokens_per_second": 74.2103435966909,
+          "total_tokens_per_second": 87.81557325608425,
+          "peak_gpu_memory_bytes": 278033408
+        }
+      ]
+    },
+    {
+      "name": "longer_prompt",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a concise teaching assistant."
+        },
+        {
+          "role": "user",
+          "content": "Summarize the tradeoffs between autoregressive language models and masked language models in a short paragraph."
+        }
+      ],
+      "summary": {
+        "run_count": 10,
+        "prompt_tokens": 38,
+        "median_generated_tokens": 44.5,
+        "median_latency_seconds": 0.6065459074961836,
+        "p95_latency_seconds": 1.2104960091979584,
+        "median_decode_tokens_per_second": 73.36427917244652,
+        "p95_decode_tokens_per_second": 74.04061951590634,
+        "median_total_tokens_per_second": 136.90360855875667,
+        "median_peak_gpu_memory_bytes": 271361280
+      },
+      "runs": [
+        {
+          "run_index": 0,
+          "prompt_tokens": 38,
+          "generated_tokens": 32,
+          "latency_seconds": 0.4403916349983774,
+          "decode_tokens_per_second": 72.6625972360213,
+          "total_tokens_per_second": 158.9494314537966,
+          "peak_gpu_memory_bytes": 270233600
+        },
+        {
+          "run_index": 1,
+          "prompt_tokens": 38,
+          "generated_tokens": 60,
+          "latency_seconds": 0.8146845360024599,
+          "decode_tokens_per_second": 73.64813906301866,
+          "total_tokens_per_second": 120.29196046959714,
+          "peak_gpu_memory_bytes": 273099264
+        },
+        {
+          "run_index": 2,
+          "prompt_tokens": 38,
+          "generated_tokens": 57,
+          "latency_seconds": 0.7731448260019533,
+          "decode_tokens_per_second": 73.72486768715179,
+          "total_tokens_per_second": 122.8747794785863,
+          "peak_gpu_memory_bytes": 272762880
+        },
+        {
+          "run_index": 3,
+          "prompt_tokens": 38,
+          "generated_tokens": 33,
+          "latency_seconds": 0.4533315360022243,
+          "decode_tokens_per_second": 72.79440625511234,
+          "total_tokens_per_second": 156.6182680034235,
+          "peak_gpu_memory_bytes": 270233600
+        },
+        {
+          "run_index": 4,
+          "prompt_tokens": 38,
+          "generated_tokens": 38,
+          "latency_seconds": 0.5195623510080623,
+          "decode_tokens_per_second": 73.13847881062179,
+          "total_tokens_per_second": 146.27695762124358,
+          "peak_gpu_memory_bytes": 270632448
+        },
+        {
+          "run_index": 5,
+          "prompt_tokens": 38,
+          "generated_tokens": 58,
+          "latency_seconds": 0.7867317540076328,
+          "decode_tokens_per_second": 73.72271387870953,
+          "total_tokens_per_second": 122.02380228200197,
+          "peak_gpu_memory_bytes": 272875008
+        },
+        {
+          "run_index": 6,
+          "prompt_tokens": 38,
+          "generated_tokens": 33,
+          "latency_seconds": 0.4529015680018347,
+          "decode_tokens_per_second": 72.86351457247841,
+          "total_tokens_per_second": 156.76695559533232,
+          "peak_gpu_memory_bytes": 270233600
+        },
+        {
+          "run_index": 7,
+          "prompt_tokens": 38,
+          "generated_tokens": 39,
+          "latency_seconds": 0.5336524079903029,
+          "decode_tokens_per_second": 73.08127803052784,
+          "total_tokens_per_second": 144.28867713719598,
+          "peak_gpu_memory_bytes": 270744576
+        },
+        {
+          "run_index": 8,
+          "prompt_tokens": 38,
+          "generated_tokens": 114,
+          "latency_seconds": 1.5343417599942768,
+          "decode_tokens_per_second": 74.29896192125099,
+          "total_tokens_per_second": 99.06528256166798,
+          "peak_gpu_memory_bytes": 279154688
+        },
+        {
+          "run_index": 9,
+          "prompt_tokens": 38,
+          "generated_tokens": 50,
+          "latency_seconds": 0.6794394070020644,
+          "decode_tokens_per_second": 73.59007953427123,
+          "total_tokens_per_second": 129.51853998031737,
+          "peak_gpu_memory_bytes": 271977984
+        }
+      ]
+    }
+  ]
+}

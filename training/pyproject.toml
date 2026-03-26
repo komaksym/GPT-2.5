@@ -1,5 +1,5 @@
 [project]
-name = "gpt-2-5"
+name = "training"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -34,6 +34,5 @@ flash-attn = [{ requirement = "torch", match-runtime = true }]
 extra-build-variables = { flash-attn = { MAX_JOBS = "2", NVCC_THREADS = "1" } }
 
 [tool.setuptools.packages.find]
-include = ["post_train*", "pre_train*", "tokenizer*"]
-exclude = ["checkpoints*", "data*", "dist*", "tests*", "trainer_output*", "wandb*"]
+include = ["pre_train*", "post_train*", "my_gpt_model*", "tokenizer*"]
 namespaces = true

@@ -9,9 +9,12 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  training:
     runs-on: macos-latest
     timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: training
 
     steps:
       - name: Check out repository
@@ -21,7 +24,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-          cache-dependency-glob: uv.lock
+          cache-dependency-glob: training/uv.lock
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,3 +39,34 @@ jobs:
 
       - name: Test
         run: uv run pytest -q
+
+  serving:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: serving/uv.lock
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --project serving --locked
+
+      - name: Import app
+        run: uv run --project serving python -c "from serving.main import app"
+
+      - name: Test
+        run: uv run --project serving pytest -q serving/tests
+
+      - name: Syntax check entrypoint
+        run: uv run --project serving python -m py_compile serving/main.py

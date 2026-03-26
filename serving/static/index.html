@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>GPT 2.5 Interface</title>
+    <link href="/static/app.css" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <style data-purpose="custom-fonts">
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+      body {
+        font-family: "Inter", sans-serif;
+      }
+    </style>
+    <style data-purpose="background-gradient">
+      .bg-gradient-custom {
+        background:
+          radial-gradient(circle at 20% 30%, rgba(224, 231, 255, 0.6) 0%, transparent 50%),
+          radial-gradient(circle at 80% 70%, rgba(224, 231, 255, 0.5) 0%, transparent 50%),
+          #f8fafc;
+      }
+    </style>
+    <style data-purpose="card-styles">
+      .suggestion-card {
+        background: linear-gradient(to bottom right, #f0f4ff, #ffffff);
+        box-shadow:
+          0 10px 25px -5px rgba(200, 215, 235, 0.5),
+          0 8px 10px -6px rgba(200, 215, 235, 0.3);
+        border: 1px solid #d6e4f0;
+        transition:
+          transform 0.2s,
+          box-shadow 0.2s;
+      }
+
+      .suggestion-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 15px 30px -5px rgba(180, 200, 230, 0.6);
+        border-color: #bfdbfe;
+      }
+    </style>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: "#2563eb",
+              "primary-dark": "#1d4ed8",
+              dark: "#1e293b",
+              gray: {
+                400: "#94a3b8",
+                500: "#64748b",
+                600: "#475569",
+              },
+            },
+          },
+        },
+      };
+    </script>
+    <script defer src="/static/app.js"></script>
+  </head>
+  <body
+    class="bg-gradient-custom min-h-screen text-slate-800 antialiased relative overflow-hidden"
+  >
+    <div class="main-shell flex min-h-screen flex-col items-center justify-between">
+      <header class="w-full max-w-7xl mx-auto px-6 py-6 absolute top-0 left-0 right-0 z-10">
+        <div class="flex items-center justify-between gap-4">
+          <div class="text-xl font-semibold tracking-tight text-dark flex items-center gap-2">
+            GPT 2.5
+          </div>
+          <button
+            class="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-full font-medium text-sm flex items-center gap-2 transition-colors shadow-sm"
+            id="new-chat-button"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path d="M12 4v16m8-8H4" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+            New Chat
+          </button>
+        </div>
+      </header>
+
+      <main class="flex-grow flex flex-col items-center justify-center w-full max-w-4xl px-4 mt-20 mb-24 z-10">
+        <section class="empty-state w-full" id="empty-state">
+          <div class="text-center mb-16">
+            <h1 class="text-6xl md:text-7xl font-bold text-dark mb-4 tracking-tight">
+              GPT 2.5
+            </h1>
+            <p class="text-[#6B7280] text-sm md:text-base whitespace-nowrap mx-auto">
+              Modern, improved reproduction of the prominent GPT 2 (124M)
+            </p>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-3xl mx-auto">
+            <button
+              class="suggestion-card rounded-2xl p-5 text-left flex flex-col gap-4 items-start group"
+              data-prompt="Explain quantum computing in simple terms"
+              type="button"
+            >
+              <div class="bg-blue-50 text-primary p-2 rounded-lg group-hover:bg-blue-100 transition-colors">
+                <svg
+                  aria-hidden="true"
+                  class="h-5 w-5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  viewBox="0 0 24 24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M12 15v6m-3-3h6M12 15a6 6 0 1 0 0-12 6 6 0 0 0 0 12z"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  ></path>
+                </svg>
+              </div>
+              <p class="text-sm font-medium text-dark leading-snug">
+                Explain quantum computing in simple terms
+              </p>
+            </button>
+
+            <button
+              class="suggestion-card rounded-2xl p-5 text-left flex flex-col gap-4 items-start group"
+              data-prompt="Write a Python script for data cleaning"
+              type="button"
+            >
+              <div class="bg-blue-50 text-primary p-2 rounded-lg group-hover:bg-blue-100 transition-colors">
+                <svg
+                  aria-hidden="true"
+                  class="h-5 w-5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  viewBox="0 0 24 24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  ></path>
+                </svg>
+              </div>
+              <p class="text-sm font-medium text-dark leading-snug">
+                Write a Python script for data cleaning
+              </p>
+            </button>
+          </div>
+        </section>
+
+        <section class="chat-view w-full" hidden id="chat-view">
+          <div class="chat-scroll" id="chat-scroll">
+            <div class="chat-messages" id="chat-messages"></div>
+          </div>
+        </section>
+      </main>
+
+      <footer
+        class="w-full max-w-3xl px-4 pb-8 fixed bottom-0 left-1/2 transform -translate-x-1/2 z-20"
+      >
+        <div class="error-banner" hidden id="error-banner" role="status"></div>
+        <div class="relative flex items-center w-full rounded-[2rem] border border-gray-200 bg-white/95 p-2 shadow-sm backdrop-blur">
+          <textarea
+            class="composer__input w-full border-0 bg-transparent py-3 pl-4 pr-16 text-dark placeholder-gray-400 focus:outline-none focus:ring-0"
+            id="message-input"
+            placeholder="Message GPT 2.5..."
+            rows="1"
+          ></textarea>
+          <button
+            aria-label="Send message"
+            class="composer__send absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-primary hover:bg-primary-dark text-white rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary flex items-center justify-center"
+            id="send-button"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="h-5 w-5"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                clip-rule="evenodd"
+                d="M3.293 9.707a1 1 0 010-1.414l6-6a1 1 0 011.414 0l6 6a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z"
+                fill-rule="evenodd"
+              ></path>
+            </svg>
+          </button>
+        </div>
+        <p class="text-[10px] text-center text-[#9ca3af] mt-4 font-semibold uppercase tracking-widest">
+          GPT 2.5 can provide inaccurate information. Verify sensitive responses.
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>

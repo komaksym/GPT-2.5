@@ -9,23 +9,26 @@ import typing
 def process_shard(
     world_size: int, rank: int, ds: typing.Any, out_path: str | os.PathLike
 ) -> None:
-
+    """Write one dataset shard to an intermediate text file."""
     shard = ds.shard(world_size, rank)
 
     print(f"Process {rank} started...")
-    with open(out_path, 'w', encoding="utf-8") as f_out:
-        for t in shard['text']:
+    with open(out_path, "w", encoding="utf-8") as f_out:
+        for t in shard["text"]:
             f_out.write(t + "\n")
 
 
 def merge_shards(
     shard_files: list[str | os.PathLike], final_output: str | os.PathLike
 ) -> None:
+    """Concatenate shard files into the final corpus and delete the temps."""
     print("Merging shards...")
     with open(final_output, "w", encoding="utf-8") as f_out:
         for s_file in shard_files:
-            with open(s_file, 'r', encoding="utf-8") as f_in:
+            with open(s_file, "r", encoding="utf-8") as f_in:
                 while True:
+                    # Merge in large chunks so we never hold the full corpus in
+                    # memory while stitching shard files together.
                     chunk = f_in.read(1024 * 1024 * 100)
                     if not chunk:
                         break
@@ -36,7 +39,9 @@ def merge_shards(
 
 
 if __name__ == "__main__":
-    fw = load_dataset("HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True)
+    fw = load_dataset(
+        "HuggingFaceFW/fineweb", name="sample-10BT", split="train", streaming=True
+    )
 
     num_workers = cpu_count() // 2
     total_shards = 15
@@ -55,5 +60,5 @@ if __name__ == "__main__":
     print("Writing to the file now...")
     for p in processes:
         p.join()
-    
+
     merge_shards(shard_files, out_path)
