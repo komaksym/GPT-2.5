@@ -33,6 +33,12 @@ def get_device() -> torch.device:
     return torch.device("cpu")
 
 
+def get_inference_dtype(device: torch.device) -> torch.dtype | None:
+    if device.type != "cuda":
+        return None
+    return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+
+
 def get_context_length(model: PreTrainedModel) -> int:
     for attr in ("context_length", "max_position_embeddings", "n_positions"):
         value = getattr(model.config, attr, None)
@@ -44,14 +50,15 @@ def get_context_length(model: PreTrainedModel) -> int:
 def load_inference_resources(repo_id: str | None = None) -> InferenceResources:
     resolved_repo_id = repo_id or get_model_repo_id()
     device = get_device()
+    inference_dtype = get_inference_dtype(device)
     tokenizer = AutoTokenizer.from_pretrained(
         resolved_repo_id,
         trust_remote_code=True,
     )
-    model = AutoModelForCausalLM.from_pretrained(
-        resolved_repo_id,
-        trust_remote_code=True,
-    )
+    model_kwargs = {"trust_remote_code": True}
+    if inference_dtype is not None:
+        model_kwargs["torch_dtype"] = inference_dtype
+    model = AutoModelForCausalLM.from_pretrained(resolved_repo_id, **model_kwargs)
     model.eval()
     model.to(device)
     return InferenceResources(
