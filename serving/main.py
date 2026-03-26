@@ -8,26 +8,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
 
-try:
-    from serving.inference import (
-        DEFAULT_MAX_NEW_TOKENS,
-        DEFAULT_TEMP,
-        DEFAULT_TOP_P,
-        InferenceResources,
-        generate_response,
-        get_model_repo_id,
-        load_inference_resources,
-    )
-except ModuleNotFoundError:
-    from inference import (
-        DEFAULT_MAX_NEW_TOKENS,
-        DEFAULT_TEMP,
-        DEFAULT_TOP_P,
-        InferenceResources,
-        generate_response,
-        get_model_repo_id,
-        load_inference_resources,
-    )
+from serving.inference import (
+    DEFAULT_MAX_NEW_TOKENS,
+    DEFAULT_TEMP,
+    DEFAULT_TOP_P,
+    InferenceResources,
+    generate_response,
+    get_model_repo_id,
+    load_inference_resources,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
