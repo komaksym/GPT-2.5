@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 
-SERVING_DIR = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
-if str(SERVING_DIR) not in sys.path:
-    sys.path.insert(0, str(SERVING_DIR))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))

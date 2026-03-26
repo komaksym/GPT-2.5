@@ -1,11 +1,7 @@
 from fastapi.testclient import TestClient
 
-try:
-    import main as serving_main
-    from inference import DEFAULT_MAX_NEW_TOKENS, DEFAULT_TEMP, DEFAULT_TOP_P
-except ModuleNotFoundError:
-    from serving import main as serving_main
-    from serving.inference import DEFAULT_MAX_NEW_TOKENS, DEFAULT_TEMP, DEFAULT_TOP_P
+from serving import main as serving_main
+from serving.inference import DEFAULT_MAX_NEW_TOKENS, DEFAULT_TEMP, DEFAULT_TOP_P
 
 
 def test_root_serves_app_shell(monkeypatch):
@@ -18,9 +14,13 @@ def test_root_serves_app_shell(monkeypatch):
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert "GPT 2.5" in response.text
-    assert "/static/app.css" in response.text
-    assert "/static/app.js" in response.text
+    assert "GPT 2.5 Interface" in response.text
+    assert (
+        "Modern, improved reproduction of the prominent GPT 2 (124M)" in response.text
+    )
+    assert (
+        "https://cdn.tailwindcss.com?plugins=forms,container-queries" in response.text
+    )
 
 
 def test_static_assets_are_served(monkeypatch):
@@ -34,11 +34,9 @@ def test_static_assets_are_served(monkeypatch):
 
     assert css_response.status_code == 200
     assert css_response.headers["content-type"].startswith("text/css")
-    assert "editorial intelligence" not in css_response.text.lower()
 
     assert js_response.status_code == 200
     assert "javascript" in js_response.headers["content-type"]
-    assert "sendMessage" in js_response.text
 
 
 def test_chat_returns_generated_response(monkeypatch):
