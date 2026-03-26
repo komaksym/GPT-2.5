@@ -5,27 +5,34 @@ from post_train import model as posttrain_model
 
 
 def test_hf_wrapper_restores_tied_embedding_hooks(monkeypatch):
+    """Ensure the HF wrapper preserves tied input and output embeddings."""
+
     class FakeEmbedding(torch.nn.Module):
         def __init__(self):
+            """Create a tiny embedding-like module for testing."""
             super().__init__()
             self.weight = torch.nn.Parameter(torch.randn(1, 1))
 
     class FakeLinear(torch.nn.Module):
         def __init__(self, weight):
+            """Expose a weight attribute matching the embedding weight."""
             super().__init__()
             self.weight = weight
 
     class FakeTransformerLM(torch.nn.Module):
         def __init__(self, *args, **kwargs):
+            """Mimic the wrapped model interface used by HFTransformerLM."""
             super().__init__()
             self.emb = FakeEmbedding()
             self.linear = FakeLinear(self.emb.weight)
             self.attn_implementations = []
 
         def set_attn_implementation(self, attn_implementation):
+            """Record the attention backend requested by the wrapper."""
             self.attn_implementations.append(attn_implementation)
 
         def forward(self, input_ids, attention_mask=None, position_ids=None):
+            """Return shape-compatible logits for the wrapper under test."""
             batch, seq_len = input_ids.shape
             return torch.zeros(batch, seq_len, 1), None
 
@@ -51,28 +58,34 @@ def test_hf_wrapper_restores_tied_embedding_hooks(monkeypatch):
 
 
 def test_hf_wrapper_forwards_position_ids(monkeypatch):
+    """Ensure position ids and masks are forwarded into the wrapped model."""
     captured = {}
 
     class FakeEmbedding(torch.nn.Module):
         def __init__(self):
+            """Create a tiny embedding-like module for testing."""
             super().__init__()
             self.weight = torch.nn.Parameter(torch.randn(4, 4))
 
     class FakeLinear(torch.nn.Module):
         def __init__(self, weight):
+            """Expose a weight attribute matching the embedding weight."""
             super().__init__()
             self.weight = weight
 
     class FakeTransformerLM(torch.nn.Module):
         def __init__(self, *args, **kwargs):
+            """Mimic the wrapped model interface used by HFTransformerLM."""
             super().__init__()
             self.emb = FakeEmbedding()
             self.linear = FakeLinear(self.emb.weight)
 
         def set_attn_implementation(self, attn_implementation):
+            """Record the attention backend requested by the wrapper."""
             captured.setdefault("attn_implementations", []).append(attn_implementation)
 
         def forward(self, input_ids, attention_mask=None, position_ids=None):
+            """Capture the forwarded arguments and return dummy logits."""
             captured["input_ids"] = input_ids
             captured["attention_mask"] = attention_mask
             captured["position_ids"] = position_ids
@@ -113,6 +126,7 @@ def test_hf_wrapper_forwards_position_ids(monkeypatch):
 
 
 def test_build_attention_mask_preserves_causal_attention_within_each_packed_sequence():
+    """Preserve causal attention inside each packed sample."""
     position_ids = torch.tensor([[0, 1, 2, 0, 1]])
 
     mask = build_attention_mask(
@@ -127,6 +141,7 @@ def test_build_attention_mask_preserves_causal_attention_within_each_packed_sequ
 
 
 def test_build_attention_mask_blocks_cross_sequence_attention():
+    """Block attention between different packed samples."""
     position_ids = torch.tensor([[0, 1, 2, 0, 1]])
 
     mask = build_attention_mask(
@@ -141,6 +156,7 @@ def test_build_attention_mask_blocks_cross_sequence_attention():
 
 
 def test_hf_wrapper_resizes_token_embeddings_and_reties_output_head():
+    """Ensure resizing embeddings keeps the LM head tied afterward."""
     model = posttrain_model.HFTransformerLM(
         posttrain_model.MyConfig(
             vocab_size=4,
@@ -167,27 +183,34 @@ def test_hf_wrapper_resizes_token_embeddings_and_reties_output_head():
 
 
 def test_hf_wrapper_set_attn_implementation_syncs_runtime(monkeypatch):
+    """Sync runtime attention state when the HF wrapper backend changes."""
+
     class FakeEmbedding(torch.nn.Module):
         def __init__(self):
+            """Create a tiny embedding-like module for testing."""
             super().__init__()
             self.weight = torch.nn.Parameter(torch.randn(1, 1))
 
     class FakeLinear(torch.nn.Module):
         def __init__(self, weight):
+            """Expose a weight attribute matching the embedding weight."""
             super().__init__()
             self.weight = weight
 
     class FakeTransformerLM(torch.nn.Module):
         def __init__(self, *args, **kwargs):
+            """Mimic the wrapped model interface used by HFTransformerLM."""
             super().__init__()
             self.emb = FakeEmbedding()
             self.linear = FakeLinear(self.emb.weight)
             self.attn_implementations = []
 
         def set_attn_implementation(self, attn_implementation):
+            """Record the attention backend requested by the wrapper."""
             self.attn_implementations.append(attn_implementation)
 
         def forward(self, input_ids, attention_mask=None, position_ids=None):
+            """Return shape-compatible logits for the wrapper under test."""
             batch, seq_len = input_ids.shape
             return torch.zeros(batch, seq_len, 1), None
 
@@ -219,31 +242,39 @@ def test_hf_wrapper_set_attn_implementation_syncs_runtime(monkeypatch):
 def test_hf_wrapper_falls_back_to_sdpa_when_flash_attention_is_unusable(
     monkeypatch, caplog
 ):
+    """Fall back to SDPA when flash attention validation fails."""
+
     class FakeEmbedding(torch.nn.Module):
         def __init__(self):
+            """Create a tiny embedding-like module for testing."""
             super().__init__()
             self.weight = torch.nn.Parameter(torch.randn(1, 1))
 
     class FakeLinear(torch.nn.Module):
         def __init__(self, weight):
+            """Expose a weight attribute matching the embedding weight."""
             super().__init__()
             self.weight = weight
 
     class FakeTransformerLM(torch.nn.Module):
         def __init__(self, *args, **kwargs):
+            """Mimic the wrapped model interface used by HFTransformerLM."""
             super().__init__()
             self.emb = FakeEmbedding()
             self.linear = FakeLinear(self.emb.weight)
             self.attn_implementations = []
 
         def set_attn_implementation(self, attn_implementation):
+            """Record the attention backend requested by the wrapper."""
             self.attn_implementations.append(attn_implementation)
 
         def forward(self, input_ids, attention_mask=None, position_ids=None):
+            """Return shape-compatible logits for the wrapper under test."""
             batch, seq_len = input_ids.shape
             return torch.zeros(batch, seq_len, 1), None
 
     def fake_check(self, attn_implementation, is_init_check=False):
+        """Simulate flash-attention validation failing during initialization."""
         if attn_implementation == "flash_attention_2":
             raise ImportError("flash_attn seems to be not installed")
         return attn_implementation
@@ -275,6 +306,7 @@ def test_hf_wrapper_falls_back_to_sdpa_when_flash_attention_is_unusable(
 
 
 def test_load_pretraining_model_uses_override_paths(monkeypatch):
+    """Pass custom snapshot and checkpoint paths through the loader."""
     snapshot_calls = []
     load_calls = []
     base_model = object()

@@ -6,6 +6,7 @@ from serving import benchmark_inference
 
 
 def test_load_prompt_cases_from_file(tmp_path):
+    """Load prompt cases from a JSON file and normalize the payload."""
     prompt_file = tmp_path / "prompts.json"
     prompt_file.write_text(
         json.dumps(
@@ -35,6 +36,7 @@ def test_load_prompt_cases_from_file(tmp_path):
 
 
 def test_summarize_runs_computes_median_and_p95():
+    """Compute the expected summary aggregates for repeated runs."""
     runs = [
         {
             "run_index": 0,
@@ -79,6 +81,7 @@ def test_summarize_runs_computes_median_and_p95():
 
 
 def test_build_result_payload_includes_startup_and_case_summaries():
+    """Include startup metadata and per-case summaries in the result payload."""
     payload = benchmark_inference.build_result_payload(
         repo_id="repo/example",
         device="cpu",

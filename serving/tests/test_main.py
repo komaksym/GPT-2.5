@@ -5,6 +5,7 @@ from serving.inference import DEFAULT_MAX_NEW_TOKENS, DEFAULT_TEMP, DEFAULT_TOP_
 
 
 def test_root_serves_app_shell(monkeypatch):
+    """Serve the app shell from the root route."""
     monkeypatch.setattr(
         serving_main, "load_inference_resources", lambda repo_id: object()
     )
@@ -24,6 +25,7 @@ def test_root_serves_app_shell(monkeypatch):
 
 
 def test_static_assets_are_served(monkeypatch):
+    """Serve the static CSS and JS assets."""
     monkeypatch.setattr(
         serving_main, "load_inference_resources", lambda repo_id: object()
     )
@@ -40,6 +42,7 @@ def test_static_assets_are_served(monkeypatch):
 
 
 def test_chat_returns_generated_response(monkeypatch):
+    """Return the generated text from the chat endpoint."""
     captured = {}
     resources = object()
 
@@ -55,6 +58,7 @@ def test_chat_returns_generated_response(monkeypatch):
         temp,
         top_p,
     ):
+        """Capture chat generation inputs and return a canned response."""
         captured["messages"] = messages
         captured["resources"] = resources
         captured["max_new_tokens"] = max_new_tokens
@@ -90,6 +94,7 @@ def test_chat_returns_generated_response(monkeypatch):
 
 
 def test_chat_runs_generation_in_threadpool(monkeypatch):
+    """Run chat generation inside FastAPI's threadpool helper."""
     resources = object()
     captured = {}
 
@@ -98,9 +103,11 @@ def test_chat_runs_generation_in_threadpool(monkeypatch):
     )
 
     def fake_generate_response(**kwargs):
+        """Provide a callable identity for the threadpool assertion."""
         return "unused"
 
     async def fake_run_in_threadpool(func, *args, **kwargs):
+        """Capture threadpool dispatch details and return a canned response."""
         captured["func"] = func
         captured["args"] = args
         captured["kwargs"] = kwargs
@@ -131,6 +138,7 @@ def test_chat_runs_generation_in_threadpool(monkeypatch):
 
 
 def test_chat_returns_503_when_model_is_unavailable(monkeypatch):
+    """Return a 503 when startup failed to load the model."""
     monkeypatch.setattr(serving_main, "load_inference_resources", lambda repo_id: None)
 
     with TestClient(serving_main.app) as client:

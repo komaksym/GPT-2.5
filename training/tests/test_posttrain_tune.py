@@ -12,12 +12,14 @@ class DummyDatasetDict(dict):
 
 
 def test_compute_metrics_returns_perplexity():
+    """Convert mean loss into perplexity."""
     metrics = tune.compute_metrics(SimpleNamespace(losses=np.array([0.0, np.log(4.0)])))
 
     assert metrics == {"perplexity": 2.0}
 
 
 def test_get_training_dtype_uses_fp16_when_bf16_is_unavailable(monkeypatch):
+    """Prefer fp16 on CUDA when bf16 is not supported."""
     monkeypatch.setattr(tune.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(tune.torch.cuda, "is_bf16_supported", lambda: False)
 
@@ -26,6 +28,8 @@ def test_get_training_dtype_uses_fp16_when_bf16_is_unavailable(monkeypatch):
 
 
 def test_get_tokenizer_sets_pad_token_and_chat_template(monkeypatch):
+    """Install the expected special tokens and chat template."""
+
     class FakeTokenizer:
         eos_token = "<eos>"
         pad_token = None
@@ -67,10 +71,12 @@ def test_get_tokenizer_sets_pad_token_and_chat_template(monkeypatch):
 def test_configure_packed_attention_enables_flash_attention_when_available(
     monkeypatch,
 ):
+    """Enable FlashAttention 2 for packed training when available."""
     calls = []
 
     class FakeModel:
         def set_attn_implementation(self, implementation):
+            """Record the requested attention backend."""
             calls.append(implementation)
 
     monkeypatch.setattr(tune.torch.cuda, "is_available", lambda: True)
@@ -85,8 +91,11 @@ def test_configure_packed_attention_enables_flash_attention_when_available(
 def test_configure_packed_attention_warns_when_flash_attention_is_unavailable(
     monkeypatch,
 ):
+    """Warn and avoid enabling flash attention when unavailable."""
+
     class FakeModel:
         def set_attn_implementation(self, implementation):
+            """Fail fast if the code tries to enable flash attention."""
             raise AssertionError("flash attention should not be enabled")
 
     monkeypatch.setattr(tune.torch.cuda, "is_available", lambda: True)
@@ -97,6 +106,7 @@ def test_configure_packed_attention_warns_when_flash_attention_is_unavailable(
 
 
 def test_main_builds_sft_trainer_for_current_api(monkeypatch):
+    """Build the SFT trainer with the expected tokenizer, model, and args."""
     load_calls = []
     dataset_calls = []
     trainer_calls = {}
@@ -108,34 +118,42 @@ def test_main_builds_sft_trainer_for_current_api(monkeypatch):
         pad_token = None
 
         def __len__(self):
+            """Report the resized tokenizer length."""
             return 7
 
     class FakeModel:
         def __init__(self):
+            """Track mutable state updated by the training setup."""
             self.config = SimpleNamespace(dtype=None, _attn_implementation="sdpa")
             self.attn_implementation_calls = []
             self.resized_to = None
             self.tied = False
 
         def set_attn_implementation(self, attn_implementation):
+            """Record the requested attention backend."""
             self.attn_implementation_calls.append(attn_implementation)
             self.config._attn_implementation = attn_implementation
 
         def resize_token_embeddings(self, size):
+            """Record the embedding resize request."""
             self.resized_to = size
 
         def tie_weights(self):
+            """Record that tie_weights was called."""
             self.tied = True
 
     class FakeSFTConfig:
         def __init__(self, **kwargs):
+            """Store trainer arguments for later assertions."""
             self.__dict__.update(kwargs)
 
     class FakeSFTTrainer:
         def __init__(self, **kwargs):
+            """Capture trainer construction kwargs."""
             trainer_calls["kwargs"] = kwargs
 
         def train(self):
+            """Record that training was launched."""
             trainer_calls["trained"] = True
 
     fake_model = FakeModel()
@@ -201,6 +219,7 @@ def test_main_builds_sft_trainer_for_current_api(monkeypatch):
 
 
 def test_main_disables_wandb_reporting_when_init_fails(monkeypatch):
+    """Disable W&B reporting when initialization raises a connection error."""
     trainer_calls = {}
     tokenized_dataset = DummyDatasetDict(train="train-split", test="test-split")
 
@@ -209,32 +228,40 @@ def test_main_disables_wandb_reporting_when_init_fails(monkeypatch):
         pad_token = None
 
         def __len__(self):
+            """Report the resized tokenizer length."""
             return 7
 
     class FakeModel:
         def __init__(self):
+            """Track mutable state updated by the training setup."""
             self.config = SimpleNamespace(dtype=None, _attn_implementation="sdpa")
             self.resized_to = None
             self.tied = False
 
         def set_attn_implementation(self, attn_implementation):
+            """Record the requested attention backend."""
             self.config._attn_implementation = attn_implementation
 
         def resize_token_embeddings(self, size):
+            """Record the embedding resize request."""
             self.resized_to = size
 
         def tie_weights(self):
+            """Record that tie_weights was called."""
             self.tied = True
 
     class FakeSFTConfig:
         def __init__(self, **kwargs):
+            """Store trainer arguments for later assertions."""
             self.__dict__.update(kwargs)
 
     class FakeSFTTrainer:
         def __init__(self, **kwargs):
+            """Capture trainer construction kwargs."""
             trainer_calls["kwargs"] = kwargs
 
         def train(self):
+            """Record that training was launched."""
             trainer_calls["trained"] = True
 
     fake_model = FakeModel()
