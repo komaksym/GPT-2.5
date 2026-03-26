@@ -10,6 +10,8 @@ DEFAULT_MODEL_REPO_ID = "itskoma/MyGPT"
 DEFAULT_MAX_NEW_TOKENS = 128
 DEFAULT_TEMP = 0.9
 DEFAULT_TOP_P = 0.8
+DEFAULT_ATTENTION_BACKEND = "sdpa"
+ATTENTION_BACKEND_ENV = "INFERENCE_ATTENTION_BACKEND"
 STOP_TOKENS = ("<|endoftext|>", "<|user|>", "<|system|>", "<|assistant|>")
 
 
@@ -25,10 +27,12 @@ class InferenceResources:
 
 
 def get_model_repo_id() -> str:
+    """Return the model repo configured for serving."""
     return os.environ.get("MODEL_REPO_ID", DEFAULT_MODEL_REPO_ID)
 
 
 def get_device() -> torch.device:
+    """Pick the best available inference device."""
     if torch.cuda.is_available():
         return torch.device("cuda")
     if torch.backends.mps.is_available():
@@ -37,6 +41,7 @@ def get_device() -> torch.device:
 
 
 def get_inference_dtype(device: torch.device) -> torch.dtype | None:
+    """Choose an inference dtype for the selected device."""
     if device.type != "cuda":
         return None
     return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
@@ -45,27 +50,33 @@ def get_inference_dtype(device: torch.device) -> torch.dtype | None:
 def configure_attention_backend(
     model: PreTrainedModel, device: torch.device
 ) -> str | None:
+    """Set the preferred attention backend when the model exposes that hook."""
     if not hasattr(model, "set_attn_implementation"):
         return getattr(model.config, "_attn_implementation", None)
 
-    preferred_backend = "flash_attention_2" if device.type == "cuda" else "sdpa"
+    # Our serving benchmarks for the 124M model were consistently faster with
+    # SDPA than Flash Attention, even on CUDA. Keep an env override so we can
+    # still force a different backend when experimenting.
+    preferred_backend = os.environ.get(ATTENTION_BACKEND_ENV, DEFAULT_ATTENTION_BACKEND)
     try:
         model.set_attn_implementation(preferred_backend)
         return preferred_backend
     except (RuntimeError, ValueError):
-        if preferred_backend != "sdpa":
-            model.set_attn_implementation("sdpa")
-            return "sdpa"
+        if preferred_backend != DEFAULT_ATTENTION_BACKEND:
+            model.set_attn_implementation(DEFAULT_ATTENTION_BACKEND)
+            return DEFAULT_ATTENTION_BACKEND
     return None
 
 
 def format_dtype(dtype: torch.dtype | None) -> str | None:
+    """Convert a torch dtype into a JSON-friendly string."""
     if dtype is None:
         return None
     return str(dtype).removeprefix("torch.")
 
 
 def get_context_length(model: PreTrainedModel) -> int:
+    """Infer the model context length from common config fields."""
     for attr in ("context_length", "max_position_embeddings", "n_positions"):
         value = getattr(model.config, attr, None)
         if isinstance(value, int) and value > 0:
@@ -74,6 +85,7 @@ def get_context_length(model: PreTrainedModel) -> int:
 
 
 def load_inference_resources(repo_id: str | None = None) -> InferenceResources:
+    """Load the tokenizer, model, and runtime metadata needed for serving."""
     resolved_repo_id = repo_id or get_model_repo_id()
     device = get_device()
     inference_dtype = get_inference_dtype(device)
@@ -83,7 +95,7 @@ def load_inference_resources(repo_id: str | None = None) -> InferenceResources:
     )
     model_kwargs = {"trust_remote_code": True}
     if inference_dtype is not None:
-        model_kwargs["torch_dtype"] = inference_dtype
+        model_kwargs["dtype"] = inference_dtype
     model = AutoModelForCausalLM.from_pretrained(resolved_repo_id, **model_kwargs)
     model.to(device)
     attention_backend = configure_attention_backend(model, device)
@@ -100,6 +112,7 @@ def load_inference_resources(repo_id: str | None = None) -> InferenceResources:
 
 
 def _autocast_context(device: torch.device):
+    """Return the autocast context used during generation."""
     if device.type != "cuda":
         return nullcontext()
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
@@ -107,6 +120,7 @@ def _autocast_context(device: torch.device):
 
 
 def _stop_token_ids(tokenizer: PreTrainedTokenizerBase) -> set[int]:
+    """Collect token ids that should terminate chat generation."""
     stop_ids: set[int] = set()
     if tokenizer.eos_token_id is not None:
         stop_ids.add(int(tokenizer.eos_token_id))
@@ -120,6 +134,7 @@ def _stop_token_ids(tokenizer: PreTrainedTokenizerBase) -> set[int]:
 
 
 def _top_p_sample(logits: torch.Tensor, temp: float, top_p: float) -> torch.Tensor:
+    """Sample one token from the logits using temperature and nucleus sampling."""
     probs = torch.softmax(logits / temp, dim=-1)
     sorted_probs, sorted_indices = torch.sort(probs, descending=True)
     cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
@@ -141,6 +156,7 @@ def _prepare_inputs(
     messages: list[dict[str, str]],
     device: torch.device,
 ) -> torch.Tensor:
+    """Render chat messages into a device-local input tensor."""
     rendered = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
@@ -151,6 +167,74 @@ def _prepare_inputs(
     return input_ids.to(device=device)
 
 
+def _model_supports_kv_cache(model: PreTrainedModel) -> bool:
+    """Report whether the loaded model advertises KV-cache support."""
+    return bool(getattr(getattr(model, "config", None), "use_cache", False))
+
+
+def _generate_response_without_cache(
+    input_ids: torch.Tensor,
+    resources: InferenceResources,
+    max_new_tokens: int,
+    temp: float,
+    top_p: float,
+) -> str:
+    """Generate a response for models that do not expose KV caching."""
+    response_tokens: list[int] = []
+    current_length = input_ids.shape[-1]
+    buffer_length = min(resources.context_length, current_length + max_new_tokens)
+    input_buffer = input_ids.new_empty((input_ids.shape[0], buffer_length))
+    input_buffer[:, :current_length] = input_ids
+
+    for _ in range(max_new_tokens):
+        with _autocast_context(resources.device):
+            logits = resources.model(input_ids=input_buffer[:, :current_length]).logits[
+                :, -1, :
+            ]
+
+        next_token = _top_p_sample(logits, temp=temp, top_p=top_p)
+        next_token_id = int(next_token.item())
+        if next_token_id in resources.stop_token_ids:
+            break
+
+        response_tokens.append(next_token_id)
+        if current_length < buffer_length:
+            input_buffer[:, current_length] = next_token[:, 0]
+            current_length += 1
+            continue
+
+        # Once the buffer is full, keep a sliding context window instead of
+        # reallocating a new tensor every decoding step.
+        input_buffer[:, :-1] = input_buffer[:, 1:].clone()
+        input_buffer[:, -1] = next_token[:, 0]
+
+    return resources.tokenizer.decode(response_tokens).strip()
+
+
+def _next_token_logits(
+    input_ids: torch.Tensor,
+    resources: InferenceResources,
+    cache_position: torch.Tensor,
+    cache_capacity: int | None = None,
+    past_key_values=None,
+):
+    """Run one cached forward pass and return the next-token logits."""
+    model_kwargs = {
+        "input_ids": input_ids,
+        "use_cache": True,
+        "cache_position": cache_position,
+    }
+    if cache_capacity is not None:
+        model_kwargs["cache_capacity"] = cache_capacity
+    if past_key_values is not None:
+        model_kwargs["past_key_values"] = past_key_values
+
+    with _autocast_context(resources.device):
+        outputs = resources.model(**model_kwargs)
+
+    return outputs.logits[:, -1, :], getattr(outputs, "past_key_values", None)
+
+
 @torch.inference_mode()
 def generate_response(
     messages: list[dict[str, str]],
@@ -159,22 +243,57 @@ def generate_response(
     temp: float = DEFAULT_TEMP,
     top_p: float = DEFAULT_TOP_P,
 ) -> str:
+    """Generate a chat response with cached decode when the model supports it."""
     input_ids = _prepare_inputs(resources.tokenizer, messages, resources.device)
+    if input_ids.shape[-1] > resources.context_length:
+        input_ids = input_ids[:, -resources.context_length :]
+
+    if not _model_supports_kv_cache(resources.model):
+        return _generate_response_without_cache(
+            input_ids,
+            resources,
+            max_new_tokens=max_new_tokens,
+            temp=temp,
+            top_p=top_p,
+        )
+
+    # Prefill the cache with the full prompt once, then decode token by token.
+    cache_capacity = min(resources.context_length, input_ids.shape[-1] + max_new_tokens)
+    cache_position = torch.arange(input_ids.shape[-1], device=resources.device)
+    logits, past_key_values = _next_token_logits(
+        input_ids,
+        resources,
+        cache_position=cache_position,
+        cache_capacity=cache_capacity,
+    )
+    if past_key_values is None:
+        return _generate_response_without_cache(
+            input_ids,
+            resources,
+            max_new_tokens=max_new_tokens,
+            temp=temp,
+            top_p=top_p,
+        )
+
     response_tokens: list[int] = []
+    cache_length = input_ids.shape[-1]
 
     for _ in range(max_new_tokens):
-        if input_ids.shape[-1] > resources.context_length:
-            input_ids = input_ids[:, -resources.context_length :]
-
-        with _autocast_context(resources.device):
-            logits = resources.model(input_ids=input_ids).logits[:, -1, :]
-
         next_token = _top_p_sample(logits, temp=temp, top_p=top_p)
         next_token_id = int(next_token.item())
         if next_token_id in resources.stop_token_ids:
             break
 
-        input_ids = torch.cat((input_ids, next_token), dim=1)
         response_tokens.append(next_token_id)
+        if cache_length >= resources.context_length:
+            break
+
+        logits, past_key_values = _next_token_logits(
+            next_token,
+            resources,
+            cache_position=torch.tensor([cache_length], device=resources.device),
+            past_key_values=past_key_values,
+        )
+        cache_length += 1
 
     return resources.tokenizer.decode(response_tokens).strip()
