@@ -66,10 +66,10 @@ jobs:
         run: uv sync --locked
 
       - name: Import app
-        run: uv run python -c "from main import app"
+        run: uv run --project serving python -c "from main import app"
 
       - name: Test
-        run: uv run pytest -q
+        run: uv run --project serving pytest -q
 
       - name: Syntax check entrypoint
-        run: uv run python -m py_compile main.py
+        run: uv run --project serving python -m py_compile main.py
