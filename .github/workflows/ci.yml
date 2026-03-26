@@ -43,9 +43,6 @@ jobs:
   serving:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: serving
 
     steps:
       - name: Check out repository
@@ -63,13 +60,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --locked
+        run: uv sync --project serving --locked
 
       - name: Import app
-        run: uv run --project serving python -c "from main import app"
+        run: uv run --project serving python -c "from serving.main import app"
 
       - name: Test
-        run: uv run --project serving pytest -q
+        run: uv run --project serving pytest -q serving/tests
 
       - name: Syntax check entrypoint
-        run: uv run --project serving python -m py_compile main.py
+        run: uv run --project serving python -m py_compile serving/main.py
