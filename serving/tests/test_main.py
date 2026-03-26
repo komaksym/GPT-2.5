@@ -89,6 +89,47 @@ def test_chat_returns_generated_response(monkeypatch):
     }
 
 
+def test_chat_runs_generation_in_threadpool(monkeypatch):
+    resources = object()
+    captured = {}
+
+    monkeypatch.setattr(
+        serving_main, "load_inference_resources", lambda repo_id: resources
+    )
+
+    def fake_generate_response(**kwargs):
+        return "unused"
+
+    async def fake_run_in_threadpool(func, *args, **kwargs):
+        captured["func"] = func
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return "Hello from the threadpool"
+
+    monkeypatch.setattr(serving_main, "generate_response", fake_generate_response)
+    monkeypatch.setattr(serving_main, "run_in_threadpool", fake_run_in_threadpool)
+
+    with TestClient(serving_main.app) as client:
+        response = client.post(
+            "/chat",
+            json={"messages": [{"role": "user", "content": "Hello"}]},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"response": "Hello from the threadpool"}
+    assert captured == {
+        "func": fake_generate_response,
+        "args": (),
+        "kwargs": {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "resources": resources,
+            "max_new_tokens": DEFAULT_MAX_NEW_TOKENS,
+            "temp": DEFAULT_TEMP,
+            "top_p": DEFAULT_TOP_P,
+        },
+    }
+
+
 def test_chat_returns_503_when_model_is_unavailable(monkeypatch):
     monkeypatch.setattr(serving_main, "load_inference_resources", lambda repo_id: None)
 

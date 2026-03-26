@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
+from fastapi.concurrency import run_in_threadpool
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -60,7 +61,8 @@ async def chat(request: Request, payload: ChatRequest) -> ChatResponse:
     if resources is None:
         raise HTTPException(status_code=503, detail="Model is not loaded.")
 
-    response = generate_response(
+    response = await run_in_threadpool(
+        generate_response,
         messages=[message.model_dump() for message in payload.messages],
         resources=resources,
         max_new_tokens=payload.max_new_tokens,
