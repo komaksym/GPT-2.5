@@ -1,19 +1,37 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
 
-from serving.inference import (
-    DEFAULT_MAX_NEW_TOKENS,
-    DEFAULT_TEMP,
-    DEFAULT_TOP_P,
-    InferenceResources,
-    generate_response,
-    get_model_repo_id,
-    load_inference_resources,
-)
+try:
+    from serving.inference import (
+        DEFAULT_MAX_NEW_TOKENS,
+        DEFAULT_TEMP,
+        DEFAULT_TOP_P,
+        InferenceResources,
+        generate_response,
+        get_model_repo_id,
+        load_inference_resources,
+    )
+except ModuleNotFoundError:
+    from inference import (
+        DEFAULT_MAX_NEW_TOKENS,
+        DEFAULT_TEMP,
+        DEFAULT_TOP_P,
+        InferenceResources,
+        generate_response,
+        get_model_repo_id,
+        load_inference_resources,
+    )
+
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+INDEX_FILE = STATIC_DIR / "index.html"
 
 
 class ChatMessage(BaseModel):
@@ -39,6 +57,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def index() -> FileResponse:
+    return FileResponse(INDEX_FILE)
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -58,9 +82,7 @@ async def chat(request: Request, payload: ChatRequest) -> ChatResponse:
 
 
 def main() -> None:
-    uvicorn.run(
-        "main:app",
-    )
+    uvicorn.run(app)
 
 
 if __name__ == "__main__":

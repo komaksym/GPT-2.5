@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>GPT 2.5 | Editorial Intelligence</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/app.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar__inner">
+        <div class="brand-mark">
+          <span class="brand-mark__name">GPT 2.5</span>
+        </div>
+        <button class="button button--primary" id="new-chat-button" type="button">
+          <span class="material-symbols-outlined" aria-hidden="true">add</span>
+          <span>New Chat</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="main-shell" id="main-shell">
+      <div class="ambient ambient--left" aria-hidden="true"></div>
+      <div class="ambient ambient--right" aria-hidden="true"></div>
+
+      <section class="empty-state" id="empty-state" aria-labelledby="home-title">
+        <div class="empty-state__content">
+          <p class="eyebrow">Editorial Intelligence</p>
+          <h1 id="home-title">GPT 2.5</h1>
+          <p class="empty-state__subtitle">
+            Next-generation conversational intelligence for asking, exploring, and
+            iterating in one clean workspace.
+          </p>
+
+          <div class="suggestions" aria-label="Prompt suggestions">
+            <button
+              class="suggestion-card"
+              data-prompt="Explain quantum computing in simple terms"
+              type="button"
+            >
+              <span class="material-symbols-outlined suggestion-card__icon" aria-hidden="true">
+                lightbulb
+              </span>
+              <span class="suggestion-card__copy"
+                >Explain quantum computing in simple terms</span
+              >
+            </button>
+
+            <button
+              class="suggestion-card"
+              data-prompt="Write a Python script for data cleaning"
+              type="button"
+            >
+              <span class="material-symbols-outlined suggestion-card__icon" aria-hidden="true">
+                code
+              </span>
+              <span class="suggestion-card__copy"
+                >Write a Python script for data cleaning</span
+              >
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="chat-view" id="chat-view" aria-label="Conversation" hidden>
+        <div class="chat-scroll" id="chat-scroll">
+          <div class="chat-messages" id="chat-messages" aria-live="polite"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="composer-shell">
+      <div class="composer-shell__inner">
+        <div class="error-banner" id="error-banner" role="alert" hidden></div>
+        <div class="composer">
+          <textarea
+            id="message-input"
+            class="composer__input"
+            placeholder="Message GPT 2.5..."
+            rows="1"
+          ></textarea>
+          <button
+            class="composer__send"
+            id="send-button"
+            type="button"
+            aria-label="Send message"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
+          </button>
+        </div>
+        <p class="composer-note">
+          GPT 2.5 can provide inaccurate information. Verify sensitive responses.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>
