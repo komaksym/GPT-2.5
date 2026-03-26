@@ -19,6 +19,7 @@ class InferenceResources:
     tokenizer: PreTrainedTokenizerBase
     device: torch.device
     context_length: int
+    stop_token_ids: set[int]
 
 
 def get_model_repo_id() -> str:
@@ -79,6 +80,7 @@ def load_inference_resources(repo_id: str | None = None) -> InferenceResources:
         tokenizer=tokenizer,
         device=device,
         context_length=get_context_length(model),
+        stop_token_ids=_stop_token_ids(tokenizer),
     )
 
 
@@ -143,7 +145,6 @@ def generate_response(
     top_p: float = DEFAULT_TOP_P,
 ) -> str:
     input_ids = _prepare_inputs(resources.tokenizer, messages, resources.device)
-    stop_ids = _stop_token_ids(resources.tokenizer)
     response_tokens: list[int] = []
 
     for _ in range(max_new_tokens):
@@ -155,7 +156,7 @@ def generate_response(
 
         next_token = _top_p_sample(logits, temp=temp, top_p=top_p)
         next_token_id = int(next_token.item())
-        if next_token_id in stop_ids:
+        if next_token_id in resources.stop_token_ids:
             break
 
         input_ids = torch.cat((input_ids, next_token), dim=1)

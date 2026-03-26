@@ -22,10 +22,17 @@ class FakeModel:
         self.attn_implementations.append(attn_implementation)
 
 
+class FakeTokenizer:
+    eos_token_id = None
+
+    def get_vocab(self):
+        return {}
+
+
 def test_load_inference_resources_uses_cuda_inference_dtype(monkeypatch):
     captured = {}
     fake_model = FakeModel()
-    fake_tokenizer = object()
+    fake_tokenizer = FakeTokenizer()
 
     monkeypatch.setattr(inference, "get_device", lambda: torch.device("cuda"))
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
@@ -51,6 +58,7 @@ def test_load_inference_resources_uses_cuda_inference_dtype(monkeypatch):
     assert resources.model is fake_model
     assert resources.tokenizer is fake_tokenizer
     assert resources.device == torch.device("cuda")
+    assert resources.stop_token_ids == set()
     assert captured == {
         "repo_id": "repo/example",
         "kwargs": {
@@ -70,7 +78,7 @@ def test_load_inference_resources_omits_torch_dtype_off_cuda(monkeypatch):
     monkeypatch.setattr(
         inference.AutoTokenizer,
         "from_pretrained",
-        lambda repo_id, trust_remote_code=True: object(),
+        lambda repo_id, trust_remote_code=True: FakeTokenizer(),
     )
 
     def fake_model_from_pretrained(repo_id, **kwargs):
@@ -87,6 +95,7 @@ def test_load_inference_resources_omits_torch_dtype_off_cuda(monkeypatch):
 
     assert captured["kwargs"] == {"trust_remote_code": True}
     assert resources.model is fake_model
+    assert resources.stop_token_ids == set()
 
 
 def test_configure_attention_backend_prefers_flash_attention_on_cuda():
@@ -110,3 +119,47 @@ def test_configure_attention_backend_falls_back_to_sdpa():
     inference.configure_attention_backend(fake_model, torch.device("cuda"))
 
     assert fake_model.attn_implementations == ["flash_attention_2", "sdpa"]
+
+
+def test_generate_response_uses_cached_stop_token_ids(monkeypatch):
+    class FakeDecodeTokenizer(FakeTokenizer):
+        def decode(self, token_ids):
+            return "".join(str(token_id) for token_id in token_ids)
+
+    class FakeOutputs:
+        def __init__(self):
+            self.logits = torch.zeros(1, 1, 8)
+
+    class FakeModel:
+        def __call__(self, input_ids):
+            return FakeOutputs()
+
+    resources = inference.InferenceResources(
+        model=FakeModel(),
+        tokenizer=FakeDecodeTokenizer(),
+        device=torch.device("cpu"),
+        context_length=8,
+        stop_token_ids={5},
+    )
+
+    monkeypatch.setattr(
+        inference,
+        "_prepare_inputs",
+        lambda tokenizer, messages, device: torch.tensor([[1, 2, 3]]),
+    )
+    monkeypatch.setattr(
+        inference, "_top_p_sample", lambda logits, temp, top_p: torch.tensor([[5]])
+    )
+    monkeypatch.setattr(
+        inference,
+        "_stop_token_ids",
+        lambda tokenizer: (_ for _ in ()).throw(AssertionError),
+    )
+
+    response = inference.generate_response(
+        messages=[{"role": "user", "content": "hello"}],
+        resources=resources,
+        max_new_tokens=2,
+    )
+
+    assert response == ""
