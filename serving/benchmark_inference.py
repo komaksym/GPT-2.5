@@ -11,6 +11,7 @@ from serving.inference import (
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_TEMP,
     DEFAULT_TOP_P,
+    format_dtype,
     generate_response,
     get_model_repo_id,
     load_inference_resources,
@@ -203,6 +204,8 @@ def build_result_payload(
     *,
     repo_id: str,
     device: str,
+    inference_dtype: str | None,
+    attention_backend: str | None,
     warmup_runs: int,
     runs: int,
     max_new_tokens: int,
@@ -219,6 +222,8 @@ def build_result_payload(
             .isoformat(),
             "repo_id": repo_id,
             "device": device,
+            "inference_dtype": inference_dtype,
+            "attention_backend": attention_backend,
             "warmup_runs": warmup_runs,
             "runs": runs,
             "max_new_tokens": max_new_tokens,
@@ -322,8 +327,16 @@ def run_case(
     }
 
 
-def print_summary(startup_seconds: float, cases: list[dict[str, object]]) -> None:
+def print_summary(
+    startup_seconds: float, resources, cases: list[dict[str, object]]
+) -> None:
+    runtime = [
+        f"device {resources.device}",
+        f"dtype {format_dtype(resources.inference_dtype) or 'default'}",
+        f"attention {resources.attention_backend or 'default'}",
+    ]
     print(f"Startup: {startup_seconds:.3f}s (cached load)")
+    print(f"Runtime: {' | '.join(runtime)}")
 
     all_runs = []
     for case in cases:
@@ -374,13 +387,15 @@ def main() -> None:
         for case in cases
     ]
 
-    print_summary(startup_seconds, case_results)
+    print_summary(startup_seconds, resources, case_results)
 
     overall = summarize_runs([run for case in case_results for run in case["runs"]])
     if args.output:
         payload = build_result_payload(
             repo_id=args.repo_id,
             device=str(resources.device),
+            inference_dtype=format_dtype(resources.inference_dtype),
+            attention_backend=resources.attention_backend,
             warmup_runs=args.warmup_runs,
             runs=args.runs,
             max_new_tokens=args.max_new_tokens,

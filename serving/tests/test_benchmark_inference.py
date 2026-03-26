@@ -82,6 +82,8 @@ def test_build_result_payload_includes_startup_and_case_summaries():
     payload = benchmark_inference.build_result_payload(
         repo_id="repo/example",
         device="cpu",
+        inference_dtype=None,
+        attention_backend="sdpa",
         warmup_runs=2,
         runs=5,
         max_new_tokens=32,
@@ -110,6 +112,8 @@ def test_build_result_payload_includes_startup_and_case_summaries():
 
     assert payload["metadata"]["repo_id"] == "repo/example"
     assert payload["metadata"]["device"] == "cpu"
+    assert payload["metadata"]["inference_dtype"] is None
+    assert payload["metadata"]["attention_backend"] == "sdpa"
     assert payload["metadata"]["startup_mode"] == "cached"
     assert payload["startup"] == {"startup_seconds": 1.25}
     assert payload["overall"]["median_latency_seconds"] == 0.5

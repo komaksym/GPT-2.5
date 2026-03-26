@@ -11,15 +11,19 @@ class FakeModel:
         self.eval_called = False
         self.to_device = None
         self.attn_implementations = []
+        self.actions = []
 
     def eval(self):
         self.eval_called = True
+        self.actions.append(("eval", None))
 
     def to(self, device):
         self.to_device = device
+        self.actions.append(("to", device))
 
     def set_attn_implementation(self, attn_implementation):
         self.attn_implementations.append(attn_implementation)
+        self.actions.append(("attn", attn_implementation))
 
 
 class FakeTokenizer:
@@ -58,6 +62,8 @@ def test_load_inference_resources_uses_cuda_inference_dtype(monkeypatch):
     assert resources.model is fake_model
     assert resources.tokenizer is fake_tokenizer
     assert resources.device == torch.device("cuda")
+    assert resources.inference_dtype == torch.bfloat16
+    assert resources.attention_backend == "flash_attention_2"
     assert resources.stop_token_ids == set()
     assert captured == {
         "repo_id": "repo/example",
@@ -68,6 +74,10 @@ def test_load_inference_resources_uses_cuda_inference_dtype(monkeypatch):
     }
     assert fake_model.eval_called is True
     assert fake_model.to_device == torch.device("cuda")
+    assert fake_model.actions[:2] == [
+        ("to", torch.device("cuda")),
+        ("attn", "flash_attention_2"),
+    ]
 
 
 def test_load_inference_resources_omits_torch_dtype_off_cuda(monkeypatch):
@@ -95,14 +105,19 @@ def test_load_inference_resources_omits_torch_dtype_off_cuda(monkeypatch):
 
     assert captured["kwargs"] == {"trust_remote_code": True}
     assert resources.model is fake_model
+    assert resources.inference_dtype is None
+    assert resources.attention_backend == "sdpa"
     assert resources.stop_token_ids == set()
 
 
 def test_configure_attention_backend_prefers_flash_attention_on_cuda():
     fake_model = FakeModel()
 
-    inference.configure_attention_backend(fake_model, torch.device("cuda"))
+    attention_backend = inference.configure_attention_backend(
+        fake_model, torch.device("cuda")
+    )
 
+    assert attention_backend == "flash_attention_2"
     assert fake_model.attn_implementations == ["flash_attention_2"]
 
 
@@ -116,8 +131,11 @@ def test_configure_attention_backend_falls_back_to_sdpa():
 
     fake_model.set_attn_implementation = flaky_set_attn_implementation
 
-    inference.configure_attention_backend(fake_model, torch.device("cuda"))
+    attention_backend = inference.configure_attention_backend(
+        fake_model, torch.device("cuda")
+    )
 
+    assert attention_backend == "sdpa"
     assert fake_model.attn_implementations == ["flash_attention_2", "sdpa"]
 
 
@@ -138,6 +156,8 @@ def test_generate_response_uses_cached_stop_token_ids(monkeypatch):
         model=FakeModel(),
         tokenizer=FakeDecodeTokenizer(),
         device=torch.device("cpu"),
+        inference_dtype=None,
+        attention_backend="sdpa",
         context_length=8,
         stop_token_ids={5},
     )
