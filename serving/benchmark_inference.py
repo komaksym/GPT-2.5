@@ -53,6 +53,7 @@ BUILTIN_CASES = [
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse and validate CLI options for the inference benchmark."""
     parser = argparse.ArgumentParser(
         description=(
             "Benchmark cached startup and steady-state inference for the serving stack. "
@@ -120,6 +121,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_prompt_cases(prompt_file: str | None) -> list[dict[str, object]]:
+    """Load benchmark prompt cases from disk or fall back to built-ins."""
     if prompt_file is None:
         return BUILTIN_CASES
 
@@ -163,6 +165,7 @@ def load_prompt_cases(prompt_file: str | None) -> list[dict[str, object]]:
 
 
 def percentile(values: list[float], fraction: float) -> float:
+    """Interpolate a percentile from an ordered list of numeric values."""
     ordered = sorted(values)
     if len(ordered) == 1:
         return ordered[0]
@@ -175,6 +178,7 @@ def percentile(values: list[float], fraction: float) -> float:
 
 
 def summarize_runs(runs: list[dict[str, object]]) -> dict[str, object]:
+    """Aggregate latency, throughput, and memory statistics across runs."""
     latencies = [float(run["latency_seconds"]) for run in runs]
     decode_rates = [float(run["decode_tokens_per_second"]) for run in runs]
     total_rates = [float(run["total_tokens_per_second"]) for run in runs]
@@ -215,6 +219,7 @@ def build_result_payload(
     cases: list[dict[str, object]],
     overall: dict[str, object],
 ) -> dict[str, object]:
+    """Build the JSON payload written by the benchmark CLI."""
     return {
         "metadata": {
             "timestamp_utc": datetime.now(timezone.utc)
@@ -238,11 +243,13 @@ def build_result_payload(
 
 
 def maybe_synchronize(device: torch.device) -> None:
+    """Flush queued CUDA work before or after timing a run."""
     if device.type == "cuda":
         torch.cuda.synchronize(device)
 
 
 def prompt_token_count(tokenizer, messages: list[dict[str, str]]) -> int:
+    """Measure the number of prompt tokens for a chat message list."""
     rendered = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
@@ -254,6 +261,7 @@ def prompt_token_count(tokenizer, messages: list[dict[str, str]]) -> int:
 
 
 def generated_token_count(tokenizer, response: str) -> int:
+    """Count generated tokens without adding tokenizer special tokens."""
     return len(tokenizer.encode(response, add_special_tokens=False))
 
 
@@ -267,6 +275,7 @@ def run_case(
     temp: float,
     top_p: float,
 ) -> dict[str, object]:
+    """Benchmark one prompt case across warmup and measured runs."""
     messages = case["messages"]
     prompt_tokens = prompt_token_count(resources.tokenizer, messages)
 
@@ -330,6 +339,7 @@ def run_case(
 def print_summary(
     startup_seconds: float, resources, cases: list[dict[str, object]]
 ) -> None:
+    """Print a compact human-readable benchmark summary."""
     runtime = [
         f"device {resources.device}",
         f"dtype {format_dtype(resources.inference_dtype) or 'default'}",
@@ -366,6 +376,7 @@ def print_summary(
 
 
 def main() -> None:
+    """Run the benchmark CLI end to end."""
     args = parse_args()
     cases = load_prompt_cases(args.prompt_file)
 

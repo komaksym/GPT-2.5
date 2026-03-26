@@ -38,6 +38,7 @@ class Linear(nn.Linear):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
+        """Initialize a bias-free projection with GPT-style weight init."""
         super().__init__(
             in_features,
             out_features,
@@ -48,6 +49,7 @@ class Linear(nn.Linear):
         nn.init.normal_(self.weight, mean=0.0, std=GPT_INIT_STD)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Project the input across its last dimension."""
         # x: (..., in_features)
         # Returns: (..., out_features)
         return super().forward(x)
@@ -65,6 +67,7 @@ class Embedding(nn.Embedding):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
+        """Initialize token embeddings with GPT-style normal weights."""
         super().__init__(
             num_embeddings,
             embedding_dim,
@@ -74,6 +77,7 @@ class Embedding(nn.Embedding):
         nn.init.normal_(self.weight, mean=0.0, std=GPT_INIT_STD)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+        """Look up embeddings for a batch of token ids."""
         # token_ids: (B, T)
         # Returns: (B, T, embedding_dim)
         return super().forward(token_ids)
@@ -92,6 +96,7 @@ class RMSNorm(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
+        """Initialize RMSNorm with a learnable gain vector."""
         super().__init__()
         self.d_model = d_model
         self.eps = eps
@@ -103,6 +108,7 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(data=param)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Normalize hidden states by their root-mean-square magnitude."""
         # x: (B, T, C)
         # Upcast the dtype to float32 to avoid overflowing/precision loss when squaring the input
         in_dtype = x.dtype
@@ -136,6 +142,7 @@ class SwiGLU(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
+        """Initialize the gated feed-forward projection weights."""
         super().__init__()
         # Init d_ff dimension (typically 8/3 * d_model in Llama)
         self.d_ff = (8 / 3) * d_model if not d_ff else d_ff
@@ -158,6 +165,7 @@ class SwiGLU(nn.Module):
         nn.init.normal_(self.w2, mean=0.0, std=GPT_INIT_STD)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the SwiGLU feed-forward transformation."""
         # x: (B, T, d_model)
         # result = (SiLU(x @ w1^T) * (x @ w3^T)) @ w2^T
         result = (SiLU(x @ self.w1.T) * (x @ self.w3.T)) @ self.w2.T
@@ -178,6 +186,7 @@ class RoPE(nn.Module):
         max_seq_len: int,
         device: Optional[torch.device] = None,
     ):
+        """Precompute rotary frequencies for the configured context length."""
         super().__init__()
         if d_k % 2 != 0:
             raise ValueError("d_k must be even (pairs of dimensions).")
@@ -269,6 +278,7 @@ def scaled_dot_prod_attn(
     V: torch.Tensor,
     mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
+    """Compute scaled dot-product attention with an optional boolean mask."""
     d_k = Q.shape[-1]
 
     # Calculate pre softmax
@@ -292,6 +302,7 @@ def eager_attention_forward(
     scaling: float,
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fallback attention kernel compatible with HF attention hooks."""
     attn_weights = torch.matmul(query, key.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = attn_weights.masked_fill(
@@ -304,6 +315,7 @@ def eager_attention_forward(
 
 
 def positions_are_packed(position_ids: torch.Tensor | None) -> bool:
+    """Detect packed sequences by looking for non-monotonic position ids."""
     if position_ids is None or position_ids.size(-1) <= 1:
         return False
     return bool((position_ids[..., 1:] <= position_ids[..., :-1]).any())
@@ -315,6 +327,7 @@ def build_attention_mask(
     attention_mask: torch.Tensor | None = None,
     position_ids: torch.Tensor | None = None,
 ) -> torch.Tensor | None:
+    """Build a causal mask that also respects packed sequence boundaries."""
     has_packed_boundaries = positions_are_packed(position_ids)
     if attention_mask is None and not has_packed_boundaries:
         return None
@@ -323,6 +336,8 @@ def build_attention_mask(
     combined_mask = causal_mask.unsqueeze(0)
 
     if has_packed_boundaries:
+        # Packed samples reset position ids back to zero, so segment ids keep
+        # attention constrained to tokens from the same packed sequence.
         segment_ids = (position_ids == 0).to(torch.int64).cumsum(dim=-1) - 1
         same_segment = segment_ids[:, :, None] == segment_ids[:, None, :]
         combined_mask = combined_mask & same_segment
@@ -347,6 +362,7 @@ class MultiheadSelfAttention(nn.Module):
         max_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
     ):
+        """Initialize self-attention projections and optional RoPE."""
         super().__init__()
 
         assert d_model % num_heads == 0, "num heads should be a power of 2"
@@ -369,9 +385,11 @@ class MultiheadSelfAttention(nn.Module):
 
     @property
     def attn_implementation(self) -> str:
+        """Return the currently configured attention backend."""
         return self.config._attn_implementation
 
     def set_attn_implementation(self, attn_implementation: str) -> None:
+        """Store the attention backend to use for runtime calls."""
         self.config._attn_implementation = attn_implementation.removeprefix("paged|")
 
     def forward(
@@ -380,6 +398,7 @@ class MultiheadSelfAttention(nn.Module):
         token_positions: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        """Run self-attention over the input sequence."""
         # x: (B, T, d_model)
         Q = self.Wq(x)
         K = self.Wk(x)
@@ -455,6 +474,7 @@ class TransformerBlock(nn.Module):
         max_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
     ) -> None:
+        """Initialize one pre-norm attention-plus-FFN transformer block."""
         super().__init__()
 
         self.norm_att = RMSNorm(d_model, device=device)
@@ -465,6 +485,7 @@ class TransformerBlock(nn.Module):
         self.ffn = SwiGLU(d_model, d_ff, device=device)
 
     def set_attn_implementation(self, attn_implementation: str) -> None:
+        """Propagate the selected attention backend to the attention layer."""
         self.mhsa.set_attn_implementation(attn_implementation)
 
     def forward(
@@ -473,6 +494,7 @@ class TransformerBlock(nn.Module):
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        """Apply attention, feed-forward layers, and residual connections."""
         # Pre-Norm + Self-Attention + Residual connection
         attn = x + self.mhsa(
             self.norm_att(x),
@@ -500,6 +522,7 @@ class TransformerLM(nn.Module):
         theta: Optional[float] = None,
         device: Optional[torch.device] = None,
     ) -> None:
+        """Construct the decoder-only Transformer stack and tied LM head."""
         super().__init__()
 
         self.device = device
@@ -518,6 +541,7 @@ class TransformerLM(nn.Module):
         self.linear.weight = self.emb.weight
 
     def set_attn_implementation(self, attn_implementation: str) -> None:
+        """Set the attention backend on every transformer block."""
         for tblock in self.tblocks:
             tblock.set_attn_implementation(attn_implementation)
 
@@ -590,6 +614,7 @@ class AdamW(torch.optim.Optimizer):
         eps: float,
         weight_decay: float,
     ) -> None:
+        """Initialize optimizer state and hyperparameters for AdamW."""
         if lr < 0:
             raise ValueError(f"Invalid learning rate: {lr}")
         defaults = {
@@ -712,6 +737,7 @@ def gradient_clipping(
 
 
 def to_cpu(obj: typing.Any) -> typing.Any:
+    """Recursively move tensors nested in Python containers onto the CPU."""
     if isinstance(obj, torch.Tensor):
         return obj.cpu()
     elif isinstance(obj, dict):
@@ -732,11 +758,13 @@ class AppState(Stateful):
     """
 
     def __init__(self, model, optimizer=None, iteration=None):
+        """Capture model, optimizer, and iteration state for checkpointing."""
         self.model = model
         self.optimizer = optimizer
         self.iteration = iteration
 
     def state_dict(self):
+        """Return a checkpoint-ready application state dictionary."""
         # this line automatically manages FSDP FQN's, as well as sets the default state dict type to FSDP.SHARDED_STATE_DICT
         model_state_dict, optimizer_state_dict = get_state_dict(
             self.model, self.optimizer
@@ -748,6 +776,7 @@ class AppState(Stateful):
         }
 
     def load_state_dict(self, state_dict):
+        """Restore model, optimizer, and iteration state from a checkpoint."""
         # sets our state dicts on the model and optimizer, now that we've loaded
         set_state_dict(
             self.model,
@@ -915,6 +944,7 @@ class DataLoader:
     def __init__(
         self, filename: str | os.PathLike, B: int, T: int, rank=0, world_size=1
     ) -> None:
+        """Open the memmapped dataset and initialize the shard cursor."""
         self.B = B
         self.T = T
         self.rank = rank

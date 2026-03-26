@@ -42,6 +42,7 @@ class ChatResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Load inference resources when the FastAPI app starts."""
     app.state.resources = load_inference_resources(get_model_repo_id())
     yield
 
@@ -52,11 +53,13 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/", include_in_schema=False)
 async def index() -> FileResponse:
+    """Serve the single-page app shell."""
     return FileResponse(INDEX_FILE)
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: Request, payload: ChatRequest) -> ChatResponse:
+    """Run chat generation for the submitted conversation."""
     resources: InferenceResources | None = getattr(request.app.state, "resources", None)
     if resources is None:
         raise HTTPException(status_code=503, detail="Model is not loaded.")
@@ -73,6 +76,7 @@ async def chat(request: Request, payload: ChatRequest) -> ChatResponse:
 
 
 def main() -> None:
+    """Launch the serving app with Uvicorn."""
     uvicorn.run(app)
 
 

@@ -26,6 +26,7 @@ class HellaSwagLoader:
     def _create_batch(
         self, start_idx: int, end_idx: int
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Build one multiple-choice batch with completion-only masks."""
         batch = self.dataset[start_idx:end_idx]
         context = batch["ctx"]
         endings = batch["endings"]
@@ -92,6 +93,7 @@ class HellaSwagLoader:
         return batch
 
     def iter_batches(self):
+        """Yield every validation batch exactly once."""
         for start_idx in range(0, self.n_examples, self.B):
             end_idx = min(start_idx + self.B, self.n_examples)
             yield self._create_batch(start_idx, end_idx)
@@ -166,6 +168,7 @@ def compute_hellaswag(
     completion_mask: torch.Tensor,
     device: torch.device,
 ) -> float:
+    """Return batch accuracy for a HellaSwag multiple-choice slice."""
     model.eval()
     correct, total = compute_hellaswag_stats(
         model, inputs, labels, completion_mask, device
@@ -180,6 +183,7 @@ def evaluate_hellaswag(
     loader: HellaSwagLoader,
     device: torch.device,
 ) -> float:
+    """Evaluate the model across the full HellaSwag validation loader."""
     model.eval()
     total_correct = 0
     total_examples = 0

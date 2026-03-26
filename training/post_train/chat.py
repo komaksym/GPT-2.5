@@ -12,6 +12,7 @@ STOP_WORDS = {"<|endoftext|>", "<|user|>", "<|system|>", "<|assistant|>"}
 
 
 def _autocast_context(device: torch.device):
+    """Return the inference autocast context for the selected device."""
     if device.type != "cuda":
         return nullcontext()
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
@@ -19,6 +20,7 @@ def _autocast_context(device: torch.device):
 
 
 def load_tokenizer(repo_id: str) -> PreTrainedTokenizerBase:
+    """Load the chat tokenizer from a Hugging Face repo."""
     return AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
 
 
@@ -127,6 +129,7 @@ def run_inference(
     top_p: float = 0.8,
     device: torch.device | None = None,
 ):
+    """Load the post-trained model and start the interactive chat loop."""
     model = HFTransformerLM.from_pretrained(repo_id)
 
     device = GPTConfig.device if device is None else device

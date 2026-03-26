@@ -31,6 +31,7 @@ class MyConfig(PretrainedConfig):
         tie_word_embeddings=True,
         **kwargs,
     ):
+        """Mirror the base GPT config in a HF-compatible configuration object."""
         super().__init__(**kwargs, tie_word_embeddings=tie_word_embeddings)
         self.vocab_size = int(vocab_size)
         self.context_length = int(context_length)
@@ -68,6 +69,7 @@ class HFTransformerLM(PreTrainedModel):
     def _check_and_adjust_attn_implementation(
         self, attn_implementation: str | None, is_init_check: bool = False
     ) -> str:
+        """Fall back to SDPA when flash attention is requested but unavailable."""
         try:
             return super()._check_and_adjust_attn_implementation(
                 attn_implementation, is_init_check=is_init_check
@@ -95,24 +97,31 @@ class HFTransformerLM(PreTrainedModel):
             )
 
     def _get_runtime_attn_implementation(self) -> str:
+        """Return the backend name understood by the wrapped runtime model."""
         return self.config._attn_implementation.removeprefix("paged|")
 
     def _sync_attn_implementation(self) -> None:
+        """Push the config-selected attention backend into the wrapped model."""
         self.model.set_attn_implementation(self._get_runtime_attn_implementation())
 
     def get_input_embeddings(self):
+        """Expose the token embedding layer through the HF API."""
         return self.model.emb
 
     def get_output_embeddings(self):
+        """Expose the tied LM head through the HF API."""
         return self.model.linear
 
     def set_input_embeddings(self, new_embeddings):
+        """Replace the wrapped token embeddings."""
         self.model.emb = new_embeddings
 
     def set_output_embeddings(self, new_embeddings):
+        """Replace the wrapped output head."""
         self.model.linear = new_embeddings
 
     def set_attn_implementation(self, attn_implementation: str | dict):
+        """Update the configured attention backend and sync it to runtime."""
         super().set_attn_implementation(attn_implementation)
         self._sync_attn_implementation()
 
@@ -124,6 +133,7 @@ class HFTransformerLM(PreTrainedModel):
         labels=None,
         **kwargs,
     ):
+        """Run the wrapped model and optionally compute next-token loss."""
         self._sync_attn_implementation()
         logits, _ = self.model(
             input_ids,
