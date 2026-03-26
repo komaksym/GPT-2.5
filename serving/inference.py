@@ -12,6 +12,11 @@ DEFAULT_TEMP = 0.9
 DEFAULT_TOP_P = 0.8
 DEFAULT_ATTENTION_BACKEND = "sdpa"
 ATTENTION_BACKEND_ENV = "INFERENCE_ATTENTION_BACKEND"
+# Cached decoding mutates and reuses KV tensors across steps, which does not
+# play well with TorchInductor cudagraph capture on this model path.
+DEFAULT_TORCH_COMPILE_MODE = "max-autotune-no-cudagraphs"
+TORCH_COMPILE_ENV = "INFERENCE_USE_TORCH_COMPILE"
+TORCH_COMPILE_MODE_ENV = "INFERENCE_TORCH_COMPILE_MODE"
 STOP_TOKENS = ("<|endoftext|>", "<|user|>", "<|system|>", "<|assistant|>")
 
 
@@ -24,6 +29,7 @@ class InferenceResources:
     attention_backend: str | None
     context_length: int
     stop_token_ids: set[int]
+    torch_compile_mode: str | None = None
 
 
 def get_model_repo_id() -> str:
@@ -45,6 +51,33 @@ def get_inference_dtype(device: torch.device) -> torch.dtype | None:
     if device.type != "cuda":
         return None
     return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+
+
+def _env_flag_is_enabled(name: str, default: bool = False) -> bool:
+    """Parse a boolean flag from the environment."""
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_torch_compile_mode(
+    use_torch_compile: bool | None = None,
+    torch_compile_mode: str | None = None,
+) -> str | None:
+    """Resolve the torch.compile mode, or return None when disabled."""
+    compile_enabled = (
+        _env_flag_is_enabled(TORCH_COMPILE_ENV)
+        if use_torch_compile is None
+        else use_torch_compile
+    )
+    if not compile_enabled:
+        return None
+
+    resolved_mode = torch_compile_mode or os.environ.get(
+        TORCH_COMPILE_MODE_ENV, DEFAULT_TORCH_COMPILE_MODE
+    )
+    return resolved_mode or DEFAULT_TORCH_COMPILE_MODE
 
 
 def configure_attention_backend(
@@ -84,11 +117,36 @@ def get_context_length(model: PreTrainedModel) -> int:
     raise ValueError("Unable to determine model context length")
 
 
-def load_inference_resources(repo_id: str | None = None) -> InferenceResources:
+def maybe_compile_model(
+    model: PreTrainedModel,
+    device: torch.device,
+    torch_compile_mode: str | None,
+) -> PreTrainedModel:
+    """Optionally wrap the model in torch.compile for inference."""
+    if torch_compile_mode is None:
+        return model
+    if not hasattr(torch, "compile"):
+        raise RuntimeError("torch.compile is unavailable in this PyTorch build.")
+    if device.type == "mps":
+        raise RuntimeError("torch.compile is not supported for MPS inference here.")
+
+    return torch.compile(model, mode=torch_compile_mode, dynamic=True)
+
+
+def load_inference_resources(
+    repo_id: str | None = None,
+    *,
+    use_torch_compile: bool | None = None,
+    torch_compile_mode: str | None = None,
+) -> InferenceResources:
     """Load the tokenizer, model, and runtime metadata needed for serving."""
     resolved_repo_id = repo_id or get_model_repo_id()
     device = get_device()
     inference_dtype = get_inference_dtype(device)
+    resolved_torch_compile_mode = get_torch_compile_mode(
+        use_torch_compile=use_torch_compile,
+        torch_compile_mode=torch_compile_mode,
+    )
     tokenizer = AutoTokenizer.from_pretrained(
         resolved_repo_id,
         trust_remote_code=True,
@@ -100,14 +158,17 @@ def load_inference_resources(repo_id: str | None = None) -> InferenceResources:
     model.to(device)
     attention_backend = configure_attention_backend(model, device)
     model.eval()
+    context_length = get_context_length(model)
+    model = maybe_compile_model(model, device, resolved_torch_compile_mode)
     return InferenceResources(
         model=model,
         tokenizer=tokenizer,
         device=device,
         inference_dtype=inference_dtype,
         attention_backend=attention_backend,
-        context_length=get_context_length(model),
+        context_length=context_length,
         stop_token_ids=_stop_token_ids(tokenizer),
+        torch_compile_mode=resolved_torch_compile_mode,
     )
 
 
@@ -167,6 +228,16 @@ def _prepare_inputs(
     return input_ids.to(device=device)
 
 
+def _mark_compile_step_begin(resources: InferenceResources) -> None:
+    """Start a new cudagraph step when using torch.compile inference."""
+    if resources.torch_compile_mode is None:
+        return
+    compiler = getattr(torch, "compiler", None)
+    if compiler is None or not hasattr(compiler, "cudagraph_mark_step_begin"):
+        return
+    compiler.cudagraph_mark_step_begin()
+
+
 def _model_supports_kv_cache(model: PreTrainedModel) -> bool:
     """Report whether the loaded model advertises KV-cache support."""
     return bool(getattr(getattr(model, "config", None), "use_cache", False))
@@ -187,6 +258,7 @@ def _generate_response_without_cache(
     input_buffer[:, :current_length] = input_ids
 
     for _ in range(max_new_tokens):
+        _mark_compile_step_begin(resources)
         with _autocast_context(resources.device):
             logits = resources.model(input_ids=input_buffer[:, :current_length]).logits[
                 :, -1, :
@@ -229,6 +301,7 @@ def _next_token_logits(
     if past_key_values is not None:
         model_kwargs["past_key_values"] = past_key_values
 
+    _mark_compile_step_begin(resources)
     with _autocast_context(resources.device):
         outputs = resources.model(**model_kwargs)
 

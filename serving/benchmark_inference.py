@@ -11,6 +11,7 @@ from serving.inference import (
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_TEMP,
     DEFAULT_TOP_P,
+    DEFAULT_TORCH_COMPILE_MODE,
     format_dtype,
     generate_response,
     get_model_repo_id,
@@ -105,6 +106,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         help="Optional path to write the benchmark results as formatted JSON.",
+    )
+    parser.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="Enable torch.compile for model inference before benchmarking.",
+    )
+    parser.add_argument(
+        "--torch-compile-mode",
+        default=DEFAULT_TORCH_COMPILE_MODE,
+        help=(
+            "torch.compile mode to use when --torch-compile is enabled. "
+            f"Defaults to {DEFAULT_TORCH_COMPILE_MODE!r}."
+        ),
     )
     args = parser.parse_args()
     if args.warmup_runs < 0:
@@ -210,6 +224,7 @@ def build_result_payload(
     device: str,
     inference_dtype: str | None,
     attention_backend: str | None,
+    torch_compile_mode: str | None,
     warmup_runs: int,
     runs: int,
     max_new_tokens: int,
@@ -229,6 +244,7 @@ def build_result_payload(
             "device": device,
             "inference_dtype": inference_dtype,
             "attention_backend": attention_backend,
+            "torch_compile_mode": torch_compile_mode,
             "warmup_runs": warmup_runs,
             "runs": runs,
             "max_new_tokens": max_new_tokens,
@@ -344,6 +360,7 @@ def print_summary(
         f"device {resources.device}",
         f"dtype {format_dtype(resources.inference_dtype) or 'default'}",
         f"attention {resources.attention_backend or 'default'}",
+        f"compile {resources.torch_compile_mode or 'off'}",
     ]
     print(f"Startup: {startup_seconds:.3f}s (cached load)")
     print(f"Runtime: {' | '.join(runtime)}")
@@ -381,7 +398,11 @@ def main() -> None:
     cases = load_prompt_cases(args.prompt_file)
 
     started_at = perf_counter()
-    resources = load_inference_resources(args.repo_id)
+    resources = load_inference_resources(
+        args.repo_id,
+        use_torch_compile=args.torch_compile,
+        torch_compile_mode=args.torch_compile_mode,
+    )
     maybe_synchronize(resources.device)
     startup_seconds = perf_counter() - started_at
 
@@ -407,6 +428,7 @@ def main() -> None:
             device=str(resources.device),
             inference_dtype=format_dtype(resources.inference_dtype),
             attention_backend=resources.attention_backend,
+            torch_compile_mode=resources.torch_compile_mode,
             warmup_runs=args.warmup_runs,
             runs=args.runs,
             max_new_tokens=args.max_new_tokens,
