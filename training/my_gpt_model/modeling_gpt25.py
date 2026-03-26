@@ -7,7 +7,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, reduce
 from transformers import PreTrainedModel
-from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutput
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+)
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 import logging
 
@@ -17,6 +20,8 @@ from .configuration_gpt25 import MyConfig
 logger = logging.getLogger(__name__)
 
 GPT_INIT_STD = 0.02
+PastKeyValue = tuple[torch.Tensor, torch.Tensor, int]
+PastKeyValues = tuple[PastKeyValue, ...]
 
 
 class Linear(nn.Linear):
@@ -32,6 +37,7 @@ class Linear(nn.Linear):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
+        """Initialize a bias-free projection with GPT-style weight init."""
         super().__init__(
             in_features,
             out_features,
@@ -42,6 +48,7 @@ class Linear(nn.Linear):
         nn.init.normal_(self.weight, mean=0.0, std=GPT_INIT_STD)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Project the input across its last dimension."""
         # x: (..., in_features)
         # Returns: (..., out_features)
         return super().forward(x)
@@ -59,6 +66,7 @@ class Embedding(nn.Embedding):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
+        """Initialize token embeddings with GPT-style normal weights."""
         super().__init__(
             num_embeddings,
             embedding_dim,
@@ -68,6 +76,7 @@ class Embedding(nn.Embedding):
         nn.init.normal_(self.weight, mean=0.0, std=GPT_INIT_STD)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+        """Look up embeddings for a batch of token ids."""
         # token_ids: (B, T)
         # Returns: (B, T, embedding_dim)
         return super().forward(token_ids)
@@ -86,6 +95,7 @@ class RMSNorm(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
+        """Initialize RMSNorm with a learnable gain vector."""
         super().__init__()
         self.d_model = d_model
         self.eps = eps
@@ -97,6 +107,7 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(data=param)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Normalize hidden states by their root-mean-square magnitude."""
         # x: (B, T, C)
         # Upcast the dtype to float32 to avoid overflowing/precision loss when squaring the input
         in_dtype = x.dtype
@@ -130,6 +141,7 @@ class SwiGLU(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
+        """Initialize the gated feed-forward projection weights."""
         super().__init__()
         # Init d_ff dimension (typically 8/3 * d_model in Llama)
         self.d_ff = (8 / 3) * d_model if not d_ff else d_ff
@@ -152,6 +164,7 @@ class SwiGLU(nn.Module):
         nn.init.normal_(self.w2, mean=0.0, std=GPT_INIT_STD)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the SwiGLU feed-forward transformation."""
         # x: (B, T, d_model)
         # result = (SiLU(x @ w1^T) * (x @ w3^T)) @ w2^T
         result = (SiLU(x @ self.w1.T) * (x @ self.w3.T)) @ self.w2.T
@@ -172,6 +185,7 @@ class RoPE(nn.Module):
         max_seq_len: int,
         device: Optional[torch.device] = None,
     ):
+        """Precompute rotary frequencies for the configured context length."""
         super().__init__()
         if d_k % 2 != 0:
             raise ValueError("d_k must be even (pairs of dimensions).")
@@ -212,8 +226,12 @@ class RoPE(nn.Module):
 
         # Retrieve precomputed cos/sin for the specific positions
         token_positions = token_positions.long().to(x.device)
-        cos_pos = self.cos[token_positions].to(x.device)  # (..., seq_len, d_half)
-        sin_pos = self.sin[token_positions].to(x.device)  # (..., seq_len, d_half)
+        cos_pos = self.cos[token_positions].to(
+            device=x.device, dtype=x.dtype
+        )  # (..., seq_len, d_half)
+        sin_pos = self.sin[token_positions].to(
+            device=x.device, dtype=x.dtype
+        )  # (..., seq_len, d_half)
 
         # Split x into even and odd indices for rotation
         x_even = x[..., 0::2]  # (..., seq_len, d_half)
@@ -263,6 +281,7 @@ def scaled_dot_prod_attn(
     V: torch.Tensor,
     mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
+    """Compute scaled dot-product attention with an optional boolean mask."""
     d_k = Q.shape[-1]
 
     # Calculate pre softmax
@@ -286,6 +305,7 @@ def eager_attention_forward(
     scaling: float,
     **kwargs,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fallback attention kernel compatible with HF attention hooks."""
     attn_weights = torch.matmul(query, key.transpose(2, 3)) * scaling
     if attention_mask is not None:
         attn_weights = attn_weights.masked_fill(
@@ -298,27 +318,52 @@ def eager_attention_forward(
 
 
 def positions_are_packed(position_ids: torch.Tensor | None) -> bool:
+    """Detect packed sequences by looking for non-monotonic position ids."""
     if position_ids is None or position_ids.size(-1) <= 1:
         return False
     return bool((position_ids[..., 1:] <= position_ids[..., :-1]).any())
 
 
 def build_attention_mask(
-    seq_len: int,
+    query_len: int,
+    key_len: int,
     device: torch.device,
     attention_mask: torch.Tensor | None = None,
-    position_ids: torch.Tensor | None = None,
+    query_position_ids: torch.Tensor | None = None,
+    key_position_ids: torch.Tensor | None = None,
 ) -> torch.Tensor | None:
-    has_packed_boundaries = positions_are_packed(position_ids)
-    if attention_mask is None and not has_packed_boundaries:
+    """Build a causal mask that also respects packed sequence boundaries."""
+    if attention_mask is not None and attention_mask.shape[-1] != key_len:
+        raise ValueError("attention_mask must match the key sequence length.")
+
+    if key_position_ids is None and query_len == key_len:
+        key_position_ids = query_position_ids
+
+    has_packed_boundaries = positions_are_packed(key_position_ids)
+    if attention_mask is None and query_len == key_len and not has_packed_boundaries:
         return None
 
-    causal_mask = torch.ones(seq_len, seq_len, device=device, dtype=torch.bool).tril()
-    combined_mask = causal_mask.unsqueeze(0)
+    if query_position_ids is None:
+        query_start = key_len - query_len
+        query_position_ids = torch.arange(
+            query_start, key_len, device=device
+        ).unsqueeze(0)
+    else:
+        query_position_ids = query_position_ids.to(device)
+
+    if key_position_ids is None:
+        key_position_ids = torch.arange(key_len, device=device).unsqueeze(0)
+    else:
+        key_position_ids = key_position_ids.to(device)
+
+    combined_mask = key_position_ids[:, None, :] <= query_position_ids[:, :, None]
 
     if has_packed_boundaries:
-        segment_ids = (position_ids == 0).to(torch.int64).cumsum(dim=-1) - 1
-        same_segment = segment_ids[:, :, None] == segment_ids[:, None, :]
+        # Packed samples reset position ids back to zero, so segment ids keep
+        # attention constrained to tokens from the same packed sequence.
+        query_segment_ids = (query_position_ids == 0).to(torch.int64).cumsum(dim=-1) - 1
+        key_segment_ids = (key_position_ids == 0).to(torch.int64).cumsum(dim=-1) - 1
+        same_segment = query_segment_ids[:, :, None] == key_segment_ids[:, None, :]
         combined_mask = combined_mask & same_segment
 
     if attention_mask is not None:
@@ -341,6 +386,7 @@ class MultiheadSelfAttention(nn.Module):
         max_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
     ):
+        """Initialize self-attention projections and optional RoPE."""
         super().__init__()
 
         assert d_model % num_heads == 0, "num heads should be a power of 2"
@@ -348,6 +394,7 @@ class MultiheadSelfAttention(nn.Module):
         self.d_k = d_model // num_heads
         self.num_heads = num_heads
         self.is_causal = True
+        self.max_seq_len = max_seq_len
         self.config = SimpleNamespace(_attn_implementation="sdpa")
 
         # Projections for Q, K, V and Output
@@ -363,9 +410,11 @@ class MultiheadSelfAttention(nn.Module):
 
     @property
     def attn_implementation(self) -> str:
+        """Return the currently configured attention backend."""
         return self.config._attn_implementation
 
     def set_attn_implementation(self, attn_implementation: str) -> None:
+        """Store the attention backend to use for runtime calls."""
         self.config._attn_implementation = attn_implementation.removeprefix("paged|")
 
     def forward(
@@ -373,9 +422,13 @@ class MultiheadSelfAttention(nn.Module):
         x: torch.Tensor,
         token_positions: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
+        past_key_value: PastKeyValue | None = None,
+        use_cache: bool = False,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, PastKeyValue | None]:
+        """Run self-attention and optionally update the KV cache."""
         # x: (B, T, d_model)
+        cache_capacity = kwargs.pop("cache_capacity", None)
         Q = self.Wq(x)
         K = self.Wk(x)
         V = self.Wv(x)
@@ -387,28 +440,98 @@ class MultiheadSelfAttention(nn.Module):
         Q = rearrange(Q, "b t (h d) -> b h t d", h=self.num_heads)
         K = rearrange(K, "b t (h d) -> b h t d", h=self.num_heads)
         V = rearrange(V, "b t (h d) -> b h t d", h=self.num_heads)
-
         seq_len = x.shape[-2]
 
         # Apply RoPE if initialized
-        if self.rope:
-            if token_positions is None:
-                token_positions = torch.arange(seq_len, device=x.device).unsqueeze(0)
+        if token_positions is None:
+            token_positions = torch.arange(seq_len, device=x.device).unsqueeze(0)
+        if token_positions.ndim == 1:
+            token_positions = token_positions.unsqueeze(0)
+        if past_key_value is not None and positions_are_packed(token_positions):
+            raise ValueError("KV caching does not support packed position_ids.")
 
+        if self.rope:
             Q = self.rope(Q, token_positions)
             K = self.rope(K, token_positions)
+
+        key_positions = token_positions
+        present_key_value = None
+        if use_cache:
+            if self.max_seq_len is None:
+                raise ValueError("KV caching requires max_seq_len to be configured.")
+
+            if past_key_value is None:
+                requested_cache_capacity = (
+                    self.max_seq_len if cache_capacity is None else int(cache_capacity)
+                )
+                if requested_cache_capacity < T:
+                    raise ValueError(
+                        "KV cache capacity must fit the provided input length."
+                    )
+                if requested_cache_capacity > self.max_seq_len:
+                    raise ValueError(
+                        "KV cache capacity exceeded configured max_seq_len."
+                    )
+                key_cache = K.new_empty(
+                    K.shape[0], self.num_heads, requested_cache_capacity, self.d_k
+                )
+                value_cache = V.new_empty(
+                    V.shape[0], self.num_heads, requested_cache_capacity, self.d_k
+                )
+                cache_length = 0
+            else:
+                key_cache, value_cache, cache_length = past_key_value
+
+            next_cache_length = cache_length + T
+            cache_capacity = key_cache.shape[-2]
+            if next_cache_length > cache_capacity:
+                # Grow the cache geometrically to avoid reallocating every
+                # decoding step while still respecting the context limit.
+                new_cache_capacity = min(
+                    self.max_seq_len,
+                    max(next_cache_length, min(cache_capacity * 2, self.max_seq_len)),
+                )
+                if new_cache_capacity < next_cache_length:
+                    raise ValueError("KV cache length exceeded configured max_seq_len.")
+                expanded_key_cache = K.new_empty(
+                    K.shape[0], self.num_heads, new_cache_capacity, self.d_k
+                )
+                expanded_value_cache = V.new_empty(
+                    V.shape[0], self.num_heads, new_cache_capacity, self.d_k
+                )
+                if cache_length:
+                    expanded_key_cache[:, :, :cache_length, :] = key_cache[
+                        :, :, :cache_length, :
+                    ]
+                    expanded_value_cache[:, :, :cache_length, :] = value_cache[
+                        :, :, :cache_length, :
+                    ]
+                key_cache = expanded_key_cache
+                value_cache = expanded_value_cache
+                cache_capacity = new_cache_capacity
+
+            if next_cache_length > self.max_seq_len:
+                raise ValueError("KV cache length exceeded configured max_seq_len.")
+
+            key_cache[:, :, cache_length:next_cache_length, :] = K
+            value_cache[:, :, cache_length:next_cache_length, :] = V
+
+            K = key_cache[:, :, :next_cache_length, :]
+            V = value_cache[:, :, :next_cache_length, :]
+            key_positions = torch.arange(next_cache_length, device=x.device).unsqueeze(
+                0
+            )
+            present_key_value = (key_cache, value_cache, next_cache_length)
+        elif past_key_value is not None:
+            past_k, past_v, _ = past_key_value
+            K = torch.cat((past_k, K), dim=-2)
+            V = torch.cat((past_v, V), dim=-2)
+            key_positions = torch.arange(K.shape[-2], device=x.device).unsqueeze(0)
 
         attention_impl = self.attn_implementation
         attention_interface = ALL_ATTENTION_FUNCTIONS.get_interface(
             attention_impl, eager_attention_forward
         )
-        packed_mask = build_attention_mask(
-            T,
-            x.device,
-            attention_mask=attention_mask,
-            position_ids=token_positions,
-        )
-
         if attention_impl == "flash_attention_2":
             out, _ = attention_interface(
                 self,
@@ -421,6 +544,24 @@ class MultiheadSelfAttention(nn.Module):
                 **kwargs,
             )
         else:
+            packed_mask = None
+            # Single-token decode with strictly increasing positions is already
+            # causal, so we can skip materializing an explicit mask.
+            skip_decode_mask = (
+                attention_mask is None
+                and T == 1
+                and not positions_are_packed(key_positions)
+                and torch.equal(token_positions[..., -1], key_positions[..., -1])
+            )
+            if not skip_decode_mask:
+                packed_mask = build_attention_mask(
+                    query_len=T,
+                    key_len=K.shape[-2],
+                    device=x.device,
+                    attention_mask=attention_mask,
+                    query_position_ids=token_positions,
+                    key_position_ids=key_positions,
+                )
             out, _ = attention_interface(
                 self,
                 Q,
@@ -434,7 +575,7 @@ class MultiheadSelfAttention(nn.Module):
         # Concatenate heads: (B, T, num_heads, d_k) -> (B, T, d_model)
         out = rearrange(out, "b t h d -> b t (h d)")
         # Final linear projection
-        return self.Wo(out)
+        return self.Wo(out), present_key_value
 
 
 class TransformerBlock(nn.Module):
@@ -452,6 +593,7 @@ class TransformerBlock(nn.Module):
         max_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
     ) -> None:
+        """Initialize one pre-norm attention-plus-FFN transformer block."""
         super().__init__()
 
         self.norm_att = RMSNorm(d_model, device=device)
@@ -462,6 +604,7 @@ class TransformerBlock(nn.Module):
         self.ffn = SwiGLU(d_model, d_ff, device=device)
 
     def set_attn_implementation(self, attn_implementation: str) -> None:
+        """Propagate the selected attention backend to the attention layer."""
         self.mhsa.set_attn_implementation(attn_implementation)
 
     def forward(
@@ -469,18 +612,24 @@ class TransformerBlock(nn.Module):
         x: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
+        past_key_value: PastKeyValue | None = None,
+        use_cache: bool = False,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, PastKeyValue | None]:
+        """Apply attention, feed-forward layers, and residual connections."""
         # Pre-Norm + Self-Attention + Residual connection
-        attn = x + self.mhsa(
+        attn_output, present_key_value = self.mhsa(
             self.norm_att(x),
             token_positions=position_ids,
             attention_mask=attention_mask,
+            past_key_value=past_key_value,
+            use_cache=use_cache,
             **kwargs,
         )
+        attn = x + attn_output
         # Pre-Norm + Feed-Forward + Residual connection
         ffwd = attn + self.ffn(self.norm_ff(attn))
-        return ffwd
+        return ffwd, present_key_value
 
 
 class TransformerLM(nn.Module):
@@ -499,6 +648,7 @@ class TransformerLM(nn.Module):
         theta: Optional[float] = None,
         device: Optional[torch.device] = None,
     ) -> None:
+        """Construct the decoder-only Transformer stack and tied LM head."""
         super().__init__()
 
         self.device = device
@@ -517,6 +667,7 @@ class TransformerLM(nn.Module):
         self.linear.weight = self.emb.weight
 
     def set_attn_implementation(self, attn_implementation: str) -> None:
+        """Set the attention backend on every transformer block."""
         for tblock in self.tblocks:
             tblock.set_attn_implementation(attn_implementation)
 
@@ -526,22 +677,41 @@ class TransformerLM(nn.Module):
         inputs_embeds: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
+        past_key_values: PastKeyValues | None = None,
+        use_cache: bool = False,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, PastKeyValues | None]:
+        """Return normalized hidden states and optional next-step KV caches."""
         if (input_ids is None) == (inputs_embeds is None):
             raise ValueError("Provide exactly one of input_ids or inputs_embeds.")
 
         emb = self.emb(input_ids) if inputs_embeds is None else inputs_embeds
 
-        for tblock in self.tblocks:
-            emb = tblock(
+        if past_key_values is not None and len(past_key_values) != len(self.tblocks):
+            raise ValueError(
+                "past_key_values must provide one cache entry per transformer block."
+            )
+
+        next_past_key_values: list[PastKeyValue] = []
+        layer_past_key_values = (
+            past_key_values
+            if past_key_values is not None
+            else (None,) * len(self.tblocks)
+        )
+
+        for tblock, layer_past_key_value in zip(self.tblocks, layer_past_key_values):
+            emb, present_key_value = tblock(
                 emb,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
+                past_key_value=layer_past_key_value,
+                use_cache=use_cache,
                 **kwargs,
             )
+            if present_key_value is not None:
+                next_past_key_values.append(present_key_value)
 
-        return self.norm(emb)
+        return self.norm(emb), tuple(next_past_key_values) if use_cache else None
 
     def forward(
         self,
@@ -552,11 +722,7 @@ class TransformerLM(nn.Module):
         inputs_embeds: torch.Tensor | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Input: input_ids (token IDs) shape (B, T)
-        Targets: Optional ground truth token IDs for loss calculation.
-        Returns: (logits, loss)
-        """
+        """Return logits and optional training loss for a token batch."""
         hidden_states = self.forward_hidden_states(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
@@ -623,6 +789,7 @@ class GPT25Model(PreTrainedModel):
     def _check_and_adjust_attn_implementation(
         self, attn_implementation: str | None, is_init_check: bool = False
     ) -> str:
+        """Fall back to SDPA when flash attention is unavailable at runtime."""
         try:
             return super()._check_and_adjust_attn_implementation(
                 attn_implementation, is_init_check=is_init_check
@@ -650,27 +817,34 @@ class GPT25Model(PreTrainedModel):
             )
 
     def _get_runtime_attn_implementation(self) -> str:
+        """Return the backend name understood by the inner TransformerLM."""
         attn_implementation = (
             getattr(self.config, "_attn_implementation", None) or "sdpa"
         )
         return attn_implementation.removeprefix("paged|")
 
     def _sync_attn_implementation(self) -> None:
+        """Push the configured attention backend into the wrapped model."""
         self.model.set_attn_implementation(self._get_runtime_attn_implementation())
 
     def get_input_embeddings(self):
+        """Expose the token embedding layer through the HF API."""
         return self.model.emb
 
     def get_output_embeddings(self):
+        """Expose the output projection through the HF API."""
         return self.model.linear
 
     def set_input_embeddings(self, new_embeddings):
+        """Replace the wrapped token embeddings."""
         self.model.emb = new_embeddings
 
     def set_output_embeddings(self, new_embeddings):
+        """Replace the wrapped output projection."""
         self.model.linear = new_embeddings
 
     def set_attn_implementation(self, attn_implementation: str | dict):
+        """Update the configured attention backend and sync it to runtime."""
         super().set_attn_implementation(attn_implementation)
         self._sync_attn_implementation()
 
@@ -681,24 +855,42 @@ class GPT25Model(PreTrainedModel):
         position_ids=None,
         inputs_embeds=None,
         return_dict=None,
+        past_key_values: PastKeyValues | None = None,
+        use_cache: bool | None = None,
         **kwargs,
     ):
+        """Return hidden states, optionally alongside updated KV caches."""
         return_dict = (
             self.config.use_return_dict if return_dict is None else return_dict
         )
-        self._sync_attn_implementation()
-        hidden_states = self.model.forward_hidden_states(
+        cache_position = kwargs.get("cache_position")
+        if position_ids is None and cache_position is not None:
+            position_ids = (
+                cache_position.unsqueeze(0)
+                if cache_position.ndim == 1
+                else cache_position
+            )
+        use_cache = self.config.use_cache if use_cache is None else use_cache
+        hidden_states, next_past_key_values = self.model.forward_hidden_states(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
             **kwargs,
         )
 
         if return_dict is False:
-            return (hidden_states,)
+            outputs = (hidden_states,)
+            if use_cache:
+                outputs += (next_past_key_values,)
+            return outputs
 
-        return BaseModelOutputWithPast(last_hidden_state=hidden_states)
+        return BaseModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=next_past_key_values,
+        )
 
 
 class GPT25ForCausalLM(GPT25Model):
@@ -710,17 +902,29 @@ class GPT25ForCausalLM(GPT25Model):
         inputs_embeds=None,
         labels=None,
         return_dict=None,
+        past_key_values: PastKeyValues | None = None,
+        use_cache: bool | None = None,
         **kwargs,
     ):
+        """Return causal LM logits, optional loss, and optional KV caches."""
         return_dict = (
             self.config.use_return_dict if return_dict is None else return_dict
         )
-        self._sync_attn_implementation()
-        hidden_states = self.model.forward_hidden_states(
+        cache_position = kwargs.get("cache_position")
+        if position_ids is None and cache_position is not None:
+            position_ids = (
+                cache_position.unsqueeze(0)
+                if cache_position.ndim == 1
+                else cache_position
+            )
+        use_cache = self.config.use_cache if use_cache is None else use_cache
+        hidden_states, next_past_key_values = self.model.forward_hidden_states(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             position_ids=position_ids,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
             **kwargs,
         )
         logits = self.model.linear(hidden_states)
@@ -737,10 +941,18 @@ class GPT25ForCausalLM(GPT25Model):
 
         if return_dict is False:
             if loss is None:
-                return (logits,)
-            return (loss, logits)
+                outputs = (logits,)
+            else:
+                outputs = (loss, logits)
+            if use_cache:
+                outputs += (next_past_key_values,)
+            return outputs
 
-        return CausalLMOutput(loss=loss, logits=logits)
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=next_past_key_values,
+        )
 
 
 HFTransformerLM = GPT25ForCausalLM

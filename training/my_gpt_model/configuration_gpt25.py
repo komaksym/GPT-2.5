@@ -46,8 +46,10 @@ class MyConfig(PretrainedConfig):
         theta=GPTConfig.theta,
         device=None,
         tie_word_embeddings=True,
+        use_cache=True,
         **kwargs,
     ):
+        """Translate project config aliases into the HF GPT-2.5 config schema."""
         super().__init__(**kwargs, tie_word_embeddings=tie_word_embeddings)
 
         self.vocab_size = int(vocab_size)
@@ -112,6 +114,7 @@ class MyConfig(PretrainedConfig):
         # Retain the legacy field for compatibility with older checkpoints, but
         # runtime code must not rely on config-driven device placement.
         self.device = None if device is None else str(device)
+        self.use_cache = bool(use_cache)
 
 
 if __name__ == "__main__":
