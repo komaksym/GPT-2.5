@@ -115,6 +115,23 @@ def test_hf_transformer_lm_alias_is_preserved():
     assert modeling_gpt25.HFTransformerLM is modeling_gpt25.GPT25ForCausalLM
 
 
+def test_transformer_lm_forward_projects_hidden_states():
+    """Allow direct TransformerLM.forward calls to produce logits."""
+    model = modeling_gpt25.TransformerLM(
+        vocab_size=32,
+        context_length=8,
+        num_layers=1,
+        d_model=8,
+        num_heads=2,
+        d_ff=64,
+    )
+
+    logits, loss = model(input_ids=torch.tensor([[1, 2, 3]]))
+
+    assert logits.shape == (1, 3, 32)
+    assert loss is None
+
+
 def test_causal_lm_forward_returns_past_key_values():
     """Ensure cached forward passes return preallocated KV caches."""
     model = modeling_gpt25.GPT25ForCausalLM(

@@ -723,7 +723,7 @@ class TransformerLM(nn.Module):
         **kwargs,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         """Return logits and optional training loss for a token batch."""
-        hidden_states = self.forward_hidden_states(
+        hidden_states, _ = self.forward_hidden_states(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
