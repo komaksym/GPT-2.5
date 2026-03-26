@@ -31,6 +31,7 @@ function formatTimestamp(date = new Date()) {
 function autoResizeInput() {
   elements.input.style.height = "auto";
   elements.input.style.height = `${Math.min(elements.input.scrollHeight, 240)}px`;
+  elements.input.style.overflowY = elements.input.scrollHeight > 240 ? "auto" : "hidden";
 }
 
 function syncComposer() {
@@ -61,16 +62,8 @@ function createMessageElement(message) {
   const meta = document.createElement("div");
   meta.className = "message__meta";
 
-  if (message.role === "assistant") {
-    const icon = document.createElement("span");
-    icon.className = "material-symbols-outlined";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = "auto_awesome";
-    meta.appendChild(icon);
-  }
-
   const label = document.createElement("span");
-  label.textContent = message.role === "assistant" ? "GPT 2.5" : "YOU";
+  label.textContent = message.role === "assistant" ? "GPT 2.5" : "You";
   meta.appendChild(label);
 
   const bubble = document.createElement("div");
@@ -99,7 +92,7 @@ function createTypingIndicator() {
 
   const label = document.createElement("span");
   label.className = "typing__label";
-  label.textContent = "AI is thinking...";
+  label.textContent = "Generating...";
 
   typingElement.append(dots, label);
   return typingElement;
