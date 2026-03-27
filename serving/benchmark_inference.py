@@ -53,6 +53,52 @@ BUILTIN_CASES = [
 ]
 
 
+def _normalize_prompt_message(
+    case_index: int, message_index: int, message: object
+) -> dict[str, str]:
+    """Validate and normalize one benchmark chat message."""
+    if not isinstance(message, dict):
+        raise ValueError(
+            f"Prompt case {case_index} message {message_index} must be an object."
+        )
+
+    role = message.get("role")
+    content = message.get("content")
+    if not isinstance(role, str) or not isinstance(content, str):
+        raise ValueError(
+            f"Prompt case {case_index} message {message_index} must have string role and content."
+        )
+    return {"role": role, "content": content}
+
+
+def _normalize_prompt_case(case_index: int, item: object) -> dict[str, object]:
+    """Validate and normalize one prompt case loaded from JSON."""
+    if not isinstance(item, dict):
+        raise ValueError(f"Prompt case {case_index} must be an object.")
+
+    name = item.get("name")
+    messages = item.get("messages")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(f"Prompt case {case_index} must have a non-empty string name.")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError(
+            f"Prompt case {case_index} must have a non-empty messages list."
+        )
+
+    return {
+        "name": name,
+        "messages": [
+            _normalize_prompt_message(case_index, message_index, message)
+            for message_index, message in enumerate(messages)
+        ],
+    }
+
+
+def _tokens_per_second(token_count: int, latency_seconds: float) -> float:
+    """Calculate throughput while handling the zero-latency edge case."""
+    return token_count / latency_seconds if latency_seconds else 0.0
+
+
 def parse_args() -> argparse.Namespace:
     """Parse and validate CLI options for the inference benchmark."""
     parser = argparse.ArgumentParser(
@@ -145,37 +191,7 @@ def load_prompt_cases(prompt_file: str | None) -> list[dict[str, object]]:
     if not data:
         raise ValueError("Prompt file must contain at least one prompt case.")
 
-    cases = []
-    for index, item in enumerate(data):
-        if not isinstance(item, dict):
-            raise ValueError(f"Prompt case {index} must be an object.")
-
-        name = item.get("name")
-        messages = item.get("messages")
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError(f"Prompt case {index} must have a non-empty string name.")
-        if not isinstance(messages, list) or not messages:
-            raise ValueError(
-                f"Prompt case {index} must have a non-empty messages list."
-            )
-
-        normalized_messages = []
-        for message_index, message in enumerate(messages):
-            if not isinstance(message, dict):
-                raise ValueError(
-                    f"Prompt case {index} message {message_index} must be an object."
-                )
-            role = message.get("role")
-            content = message.get("content")
-            if not isinstance(role, str) or not isinstance(content, str):
-                raise ValueError(
-                    f"Prompt case {index} message {message_index} must have string role and content."
-                )
-            normalized_messages.append({"role": role, "content": content})
-
-        cases.append({"name": name, "messages": normalized_messages})
-
-    return cases
+    return [_normalize_prompt_case(index, item) for index, item in enumerate(data)]
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -332,13 +348,12 @@ def run_case(
                 "prompt_tokens": prompt_tokens,
                 "generated_tokens": generated_tokens,
                 "latency_seconds": latency_seconds,
-                "decode_tokens_per_second": (
-                    generated_tokens / latency_seconds if latency_seconds else 0.0
+                "decode_tokens_per_second": _tokens_per_second(
+                    generated_tokens, latency_seconds
                 ),
-                "total_tokens_per_second": (
-                    (prompt_tokens + generated_tokens) / latency_seconds
-                    if latency_seconds
-                    else 0.0
+                "total_tokens_per_second": _tokens_per_second(
+                    prompt_tokens + generated_tokens,
+                    latency_seconds,
                 ),
                 "peak_gpu_memory_bytes": peak_memory,
             }

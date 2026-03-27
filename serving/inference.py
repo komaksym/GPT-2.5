@@ -7,6 +7,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 DEFAULT_MODEL_REPO_ID = "itskoma/MyGPT"
+MODEL_REPO_ID_ENV = "MODEL_REPO_ID"
 DEFAULT_MAX_NEW_TOKENS = 128
 DEFAULT_TEMP = 0.9
 DEFAULT_TOP_P = 0.8
@@ -18,6 +19,7 @@ DEFAULT_TORCH_COMPILE_MODE = "max-autotune-no-cudagraphs"
 TORCH_COMPILE_ENV = "INFERENCE_USE_TORCH_COMPILE"
 TORCH_COMPILE_MODE_ENV = "INFERENCE_TORCH_COMPILE_MODE"
 STOP_TOKENS = ("<|endoftext|>", "<|user|>", "<|system|>", "<|assistant|>")
+TRUST_REMOTE_CODE = True
 
 
 @dataclass(slots=True)
@@ -34,7 +36,7 @@ class InferenceResources:
 
 def get_model_repo_id() -> str:
     """Return the model repo configured for serving."""
-    return os.environ.get("MODEL_REPO_ID", DEFAULT_MODEL_REPO_ID)
+    return os.environ.get(MODEL_REPO_ID_ENV, DEFAULT_MODEL_REPO_ID)
 
 
 def get_device() -> torch.device:
@@ -81,7 +83,7 @@ def get_torch_compile_mode(
 
 
 def configure_attention_backend(
-    model: PreTrainedModel, device: torch.device
+    model: PreTrainedModel, _device: torch.device
 ) -> str | None:
     """Set the preferred attention backend when the model exposes that hook."""
     if not hasattr(model, "set_attn_implementation"):
@@ -133,6 +135,35 @@ def maybe_compile_model(
     return torch.compile(model, mode=torch_compile_mode, dynamic=True)
 
 
+def _load_tokenizer(repo_id: str) -> PreTrainedTokenizerBase:
+    """Load the serving tokenizer with the repo's custom code enabled."""
+    return AutoTokenizer.from_pretrained(repo_id, trust_remote_code=TRUST_REMOTE_CODE)
+
+
+def _model_load_kwargs(inference_dtype: torch.dtype | None) -> dict[str, object]:
+    """Build the kwargs used to load the causal LM for inference."""
+    model_kwargs: dict[str, object] = {"trust_remote_code": TRUST_REMOTE_CODE}
+    if inference_dtype is not None:
+        model_kwargs["dtype"] = inference_dtype
+    return model_kwargs
+
+
+def _trim_to_context_length(
+    input_ids: torch.Tensor, context_length: int
+) -> torch.Tensor:
+    """Clamp the prompt to the model's maximum supported context window."""
+    if input_ids.shape[-1] <= context_length:
+        return input_ids
+    return input_ids[:, -context_length:]
+
+
+def _decode_response_tokens(
+    tokenizer: PreTrainedTokenizerBase, token_ids: list[int]
+) -> str:
+    """Decode generated token ids into a stripped response string."""
+    return tokenizer.decode(token_ids).strip()
+
+
 def load_inference_resources(
     repo_id: str | None = None,
     *,
@@ -147,14 +178,11 @@ def load_inference_resources(
         use_torch_compile=use_torch_compile,
         torch_compile_mode=torch_compile_mode,
     )
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = _load_tokenizer(resolved_repo_id)
+    model = AutoModelForCausalLM.from_pretrained(
         resolved_repo_id,
-        trust_remote_code=True,
+        **_model_load_kwargs(inference_dtype),
     )
-    model_kwargs = {"trust_remote_code": True}
-    if inference_dtype is not None:
-        model_kwargs["dtype"] = inference_dtype
-    model = AutoModelForCausalLM.from_pretrained(resolved_repo_id, **model_kwargs)
     model.to(device)
     attention_backend = configure_attention_backend(model, device)
     model.eval()
@@ -280,7 +308,7 @@ def _generate_response_without_cache(
         input_buffer[:, :-1] = input_buffer[:, 1:].clone()
         input_buffer[:, -1] = next_token[:, 0]
 
-    return resources.tokenizer.decode(response_tokens).strip()
+    return _decode_response_tokens(resources.tokenizer, response_tokens)
 
 
 def _next_token_logits(
@@ -317,9 +345,10 @@ def generate_response(
     top_p: float = DEFAULT_TOP_P,
 ) -> str:
     """Generate a chat response with cached decode when the model supports it."""
-    input_ids = _prepare_inputs(resources.tokenizer, messages, resources.device)
-    if input_ids.shape[-1] > resources.context_length:
-        input_ids = input_ids[:, -resources.context_length :]
+    input_ids = _trim_to_context_length(
+        _prepare_inputs(resources.tokenizer, messages, resources.device),
+        resources.context_length,
+    )
 
     if not _model_supports_kv_cache(resources.model):
         return _generate_response_without_cache(
@@ -369,4 +398,4 @@ def generate_response(
         )
         cache_length += 1
 
-    return resources.tokenizer.decode(response_tokens).strip()
+    return _decode_response_tokens(resources.tokenizer, response_tokens)
