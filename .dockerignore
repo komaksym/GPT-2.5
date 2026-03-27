@@ -1,0 +1,18 @@
+# Ignore everything by default
+**
+
+# Allow only what the Dockerfile copies
+!serving/
+!serving/pyproject.toml
+!serving/uv.lock
+!serving/app/
+!serving/app/**
+
+# Keep junk out even inside allowed dirs
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/.DS_Store
