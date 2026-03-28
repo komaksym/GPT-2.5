@@ -24,3 +24,7 @@ flash-attn = [{ requirement = "torch", match-runtime = true }]
 
 [tool.uv]
 extra-build-variables = { flash-attn = { MAX_JOBS = "2", NVCC_THREADS = "1" } }
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+namespaces = false
