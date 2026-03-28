@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
 
-from app.inference import (
+from .inference import (
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_TEMP,
     DEFAULT_TOP_P,

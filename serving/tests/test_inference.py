@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import torch
 
-from serving import inference
+from serving.app import inference
 
 
 class FakeModel:

@@ -7,7 +7,7 @@ from time import perf_counter
 
 import torch
 
-from serving.inference import (
+from serving.app.inference import (
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_TEMP,
     DEFAULT_TOP_P,

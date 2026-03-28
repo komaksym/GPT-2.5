@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from serving import main as serving_main
-from serving.inference import DEFAULT_MAX_NEW_TOKENS, DEFAULT_TEMP, DEFAULT_TOP_P
+from serving.app import main as serving_main
+from serving.app.inference import DEFAULT_MAX_NEW_TOKENS, DEFAULT_TEMP, DEFAULT_TOP_P
 
 
 def test_root_serves_app_shell(monkeypatch):
