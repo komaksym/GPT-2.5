@@ -1,10 +1,11 @@
 {
   "metadata": {
-    "timestamp_utc": "2026-03-26T17:31:37+00:00",
+    "timestamp_utc": "2026-03-28T22:12:36+00:00",
     "repo_id": "itskoma/MyGPT",
     "device": "cuda",
     "inference_dtype": "bfloat16",
     "attention_backend": "sdpa",
+    "torch_compile_mode": "max-autotune-no-cudagraphs",
     "warmup_runs": 3,
     "runs": 10,
     "max_new_tokens": 128,
@@ -13,18 +14,18 @@
     "startup_mode": "cached"
   },
   "startup": {
-    "startup_seconds": 1.4910255830036476
+    "startup_seconds": 3.1891192458570004
   },
   "overall": {
     "run_count": 30,
     "prompt_tokens": 16,
-    "median_generated_tokens": 57.5,
-    "median_latency_seconds": 0.7799382900047931,
-    "p95_latency_seconds": 1.7244288070534821,
-    "median_decode_tokens_per_second": 73.21942040984304,
-    "p95_decode_tokens_per_second": 74.30166872688915,
-    "median_total_tokens_per_second": 100.13094898973432,
-    "median_peak_gpu_memory_bytes": 271977984
+    "median_generated_tokens": 59.5,
+    "median_latency_seconds": 0.6727397204376757,
+    "p95_latency_seconds": 1.418721327453386,
+    "median_decode_tokens_per_second": 89.09898239626233,
+    "p95_decode_tokens_per_second": 90.29850218476228,
+    "median_total_tokens_per_second": 121.40117734937039,
+    "median_peak_gpu_memory_bytes": 271472384
   },
   "cases": [
     {
@@ -38,104 +39,104 @@
       "summary": {
         "run_count": 10,
         "prompt_tokens": 16,
-        "median_generated_tokens": 42.5,
-        "median_latency_seconds": 0.5810091425009887,
-        "p95_latency_seconds": 0.9536210423961164,
-        "median_decode_tokens_per_second": 73.14880348067214,
-        "p95_decode_tokens_per_second": 73.54478352327199,
-        "median_total_tokens_per_second": 100.69106709705899,
-        "median_peak_gpu_memory_bytes": 268670976
+        "median_generated_tokens": 45.0,
+        "median_latency_seconds": 0.5047994285123423,
+        "p95_latency_seconds": 1.0120649068849155,
+        "median_decode_tokens_per_second": 88.74251322994837,
+        "p95_decode_tokens_per_second": 90.33566360698907,
+        "median_total_tokens_per_second": 120.84222667772158,
+        "median_peak_gpu_memory_bytes": 268949504
       },
       "runs": [
         {
           "run_index": 0,
           "prompt_tokens": 16,
-          "generated_tokens": 37,
-          "latency_seconds": 0.5074676749936771,
-          "decode_tokens_per_second": 72.91104798046696,
-          "total_tokens_per_second": 104.44014980985807,
-          "peak_gpu_memory_bytes": 268062720
+          "generated_tokens": 42,
+          "latency_seconds": 0.4709763890132308,
+          "decode_tokens_per_second": 89.17644489142347,
+          "total_tokens_per_second": 123.14842389768003,
+          "peak_gpu_memory_bytes": 268615680
         },
         {
           "run_index": 1,
           "prompt_tokens": 16,
-          "generated_tokens": 44,
-          "latency_seconds": 0.6004849370074226,
-          "decode_tokens_per_second": 73.27411111972009,
-          "total_tokens_per_second": 99.91924243598194,
-          "peak_gpu_memory_bytes": 268837888
+          "generated_tokens": 118,
+          "latency_seconds": 1.296685968991369,
+          "decode_tokens_per_second": 91.0012160398301,
+          "total_tokens_per_second": 103.34036397743418,
+          "peak_gpu_memory_bytes": 277134848
         },
         {
           "run_index": 2,
           "prompt_tokens": 16,
-          "generated_tokens": 24,
-          "latency_seconds": 0.33328372599498834,
-          "decode_tokens_per_second": 72.01071677997531,
-          "total_tokens_per_second": 120.01786129995885,
-          "peak_gpu_memory_bytes": 266625024
+          "generated_tokens": 45,
+          "latency_seconds": 0.5026685521006584,
+          "decode_tokens_per_second": 89.52221063351669,
+          "total_tokens_per_second": 121.35232996987817,
+          "peak_gpu_memory_bytes": 268949504
         },
         {
           "run_index": 3,
           "prompt_tokens": 16,
-          "generated_tokens": 61,
-          "latency_seconds": 0.926200271002017,
-          "decode_tokens_per_second": 65.86048601994759,
-          "total_tokens_per_second": 83.13536759895022,
-          "peak_gpu_memory_bytes": 270744576
+          "generated_tokens": 58,
+          "latency_seconds": 0.6641947198659182,
+          "decode_tokens_per_second": 87.32378964365832,
+          "total_tokens_per_second": 111.4131109246675,
+          "peak_gpu_memory_bytes": 270407168
         },
         {
           "run_index": 4,
           "prompt_tokens": 16,
-          "generated_tokens": 72,
-          "latency_seconds": 0.9760562189912889,
-          "decode_tokens_per_second": 73.76624276254172,
-          "total_tokens_per_second": 90.15874115421765,
-          "peak_gpu_memory_bytes": 271977984
+          "generated_tokens": 42,
+          "latency_seconds": 0.47475985204800963,
+          "decode_tokens_per_second": 88.46577868541587,
+          "total_tokens_per_second": 122.16702770843143,
+          "peak_gpu_memory_bytes": 268615680
         },
         {
           "run_index": 5,
           "prompt_tokens": 16,
-          "generated_tokens": 42,
-          "latency_seconds": 0.5740330490079941,
-          "decode_tokens_per_second": 73.16651902287093,
-          "total_tokens_per_second": 101.03947865063128,
-          "peak_gpu_memory_bytes": 268615680
+          "generated_tokens": 54,
+          "latency_seconds": 0.6086878199130297,
+          "decode_tokens_per_second": 88.7154272410373,
+          "total_tokens_per_second": 115.00147975690021,
+          "peak_gpu_memory_bytes": 269958656
         },
         {
           "run_index": 6,
           "prompt_tokens": 16,
           "generated_tokens": 30,
-          "latency_seconds": 0.4140511939913267,
-          "decode_tokens_per_second": 72.45480857284623,
-          "total_tokens_per_second": 111.0973731450309,
+          "latency_seconds": 0.34233915084041655,
+          "decode_tokens_per_second": 87.63239590433137,
+          "total_tokens_per_second": 134.36967371997477,
           "peak_gpu_memory_bytes": 267288576
         },
         {
           "run_index": 7,
           "prompt_tokens": 16,
-          "generated_tokens": 45,
-          "latency_seconds": 0.614283274000627,
-          "decode_tokens_per_second": 73.25610496754966,
-          "total_tokens_per_second": 99.30272006712288,
-          "peak_gpu_memory_bytes": 268950016
+          "generated_tokens": 58,
+          "latency_seconds": 0.6515278560109437,
+          "decode_tokens_per_second": 89.02151990110117,
+          "total_tokens_per_second": 113.57918056347391,
+          "peak_gpu_memory_bytes": 270407168
         },
         {
           "run_index": 8,
           "prompt_tokens": 16,
-          "generated_tokens": 41,
-          "latency_seconds": 0.5602414220047649,
-          "decode_tokens_per_second": 73.18273585213642,
-          "total_tokens_per_second": 101.74185228223844,
-          "peak_gpu_memory_bytes": 268505088
+          "generated_tokens": 45,
+          "latency_seconds": 0.5069303049240261,
+          "decode_tokens_per_second": 88.76959921885943,
+          "total_tokens_per_second": 120.332123385565,
+          "peak_gpu_memory_bytes": 268949504
         },
         {
           "run_index": 9,
           "prompt_tokens": 16,
-          "generated_tokens": 43,
-          "latency_seconds": 0.5879852359939832,
-          "decode_tokens_per_second": 73.13108793847336,
-          "total_tokens_per_second": 100.3426555434867,
-          "peak_gpu_memory_bytes": 268726272
+          "generated_tokens": 27,
+          "latency_seconds": 0.309768273960799,
+          "decode_tokens_per_second": 87.16192802693809,
+          "total_tokens_per_second": 138.8134409317903,
+          "peak_gpu_memory_bytes": 266956800
         }
       ]
     },
@@ -151,103 +152,103 @@
         "run_count": 10,
         "prompt_tokens": 22,
         "median_generated_tokens": 124.0,
-        "median_latency_seconds": 1.6684369649956352,
-        "p95_latency_seconds": 1.7425621263966604,
-        "median_decode_tokens_per_second": 74.18179075945633,
-        "p95_decode_tokens_per_second": 74.37058149767176,
-        "median_total_tokens_per_second": 87.05457931259133,
-        "median_peak_gpu_memory_bytes": 278481920
+        "median_latency_seconds": 1.3853056490188465,
+        "p95_latency_seconds": 1.4201997340656818,
+        "median_decode_tokens_per_second": 89.9157825300521,
+        "p95_decode_tokens_per_second": 90.29850218476228,
+        "median_total_tokens_per_second": 106.11842566372172,
+        "median_peak_gpu_memory_bytes": 278592512
       },
       "runs": [
         {
           "run_index": 0,
           "prompt_tokens": 22,
-          "generated_tokens": 128,
-          "latency_seconds": 1.7252226569980849,
-          "decode_tokens_per_second": 74.19332193487539,
-          "total_tokens_per_second": 86.94529914243209,
-          "peak_gpu_memory_bytes": 278930432
+          "generated_tokens": 61,
+          "latency_seconds": 0.6834086710587144,
+          "decode_tokens_per_second": 89.2584519091641,
+          "total_tokens_per_second": 121.45002472886262,
+          "peak_gpu_memory_bytes": 271416320
         },
         {
           "run_index": 1,
           "prompt_tokens": 22,
           "generated_tokens": 128,
-          "latency_seconds": 1.756748964995495,
-          "decode_tokens_per_second": 72.86186162650066,
-          "total_tokens_per_second": 85.38499409355545,
-          "peak_gpu_memory_bytes": 278930432
+          "latency_seconds": 1.4211634760722518,
+          "decode_tokens_per_second": 90.06704869292074,
+          "total_tokens_per_second": 105.54732268701649,
+          "peak_gpu_memory_bytes": 278928896
         },
         {
           "run_index": 2,
           "prompt_tokens": 22,
-          "generated_tokens": 118,
-          "latency_seconds": 1.5909341650112765,
-          "decode_tokens_per_second": 74.1702595840373,
-          "total_tokens_per_second": 87.99861306580696,
-          "peak_gpu_memory_bytes": 277809152
+          "generated_tokens": 122,
+          "latency_seconds": 1.35431635286659,
+          "decode_tokens_per_second": 90.08235021438738,
+          "total_tokens_per_second": 106.32670844976872,
+          "peak_gpu_memory_bytes": 278256128
         },
         {
           "run_index": 3,
           "prompt_tokens": 22,
-          "generated_tokens": 112,
-          "latency_seconds": 1.5472080040053697,
-          "decode_tokens_per_second": 72.38845695605082,
-          "total_tokens_per_second": 86.60761814384651,
-          "peak_gpu_memory_bytes": 277136384
+          "generated_tokens": 128,
+          "latency_seconds": 1.4190218271687627,
+          "decode_tokens_per_second": 90.20298176483024,
+          "total_tokens_per_second": 105.70661925566044,
+          "peak_gpu_memory_bytes": 278928896
         },
         {
           "run_index": 4,
           "prompt_tokens": 22,
           "generated_tokens": 128,
-          "latency_seconds": 1.7226555890083546,
-          "decode_tokens_per_second": 74.30388338604764,
-          "total_tokens_per_second": 87.07486334302459,
-          "peak_gpu_memory_bytes": 278930432
+          "latency_seconds": 1.4162949451711029,
+          "decode_tokens_per_second": 90.37665525561577,
+          "total_tokens_per_second": 105.91014287767473,
+          "peak_gpu_memory_bytes": 278928896
         },
         {
           "run_index": 5,
           "prompt_tokens": 22,
-          "generated_tokens": 128,
-          "latency_seconds": 1.7234585460100789,
-          "decode_tokens_per_second": 74.26926530744154,
-          "total_tokens_per_second": 87.03429528215806,
-          "peak_gpu_memory_bytes": 278930432
+          "generated_tokens": 79,
+          "latency_seconds": 0.88012386392802,
+          "decode_tokens_per_second": 89.7600931389595,
+          "total_tokens_per_second": 114.75657477259381,
+          "peak_gpu_memory_bytes": 273434624
         },
         {
           "run_index": 6,
           "prompt_tokens": 22,
-          "generated_tokens": 108,
-          "latency_seconds": 1.5611801319901133,
-          "decode_tokens_per_second": 69.17843609905994,
-          "total_tokens_per_second": 83.27033974886844,
-          "peak_gpu_memory_bytes": 276687872
+          "generated_tokens": 103,
+          "latency_seconds": 1.1431611028965563,
+          "decode_tokens_per_second": 90.10103627477989,
+          "total_tokens_per_second": 109.3459178091989,
+          "peak_gpu_memory_bytes": 276125696
         },
         {
           "run_index": 7,
           "prompt_tokens": 22,
-          "generated_tokens": 98,
-          "latency_seconds": 1.3273791219980922,
-          "decode_tokens_per_second": 73.82969821951204,
-          "total_tokens_per_second": 90.40371210552495,
-          "peak_gpu_memory_bytes": 275566080
+          "generated_tokens": 126,
+          "latency_seconds": 1.4183540500234812,
+          "decode_tokens_per_second": 88.8353651882011,
+          "total_tokens_per_second": 104.34630196709335,
+          "peak_gpu_memory_bytes": 278928896
         },
         {
           "run_index": 8,
           "prompt_tokens": 22,
-          "generated_tokens": 128,
-          "latency_seconds": 1.7198486720008077,
-          "decode_tokens_per_second": 74.42515267990967,
-          "total_tokens_per_second": 87.21697579676915,
-          "peak_gpu_memory_bytes": 278930432
+          "generated_tokens": 127,
+          "latency_seconds": 1.4166088760830462,
+          "decode_tokens_per_second": 89.65071597684586,
+          "total_tokens_per_second": 105.18076126417348,
+          "peak_gpu_memory_bytes": 278928896
         },
         {
           "run_index": 9,
           "prompt_tokens": 22,
-          "generated_tokens": 120,
-          "latency_seconds": 1.6170252579904627,
-          "decode_tokens_per_second": 74.2103435966909,
-          "total_tokens_per_second": 87.81557325608425,
-          "peak_gpu_memory_bytes": 278033408
+          "generated_tokens": 118,
+          "latency_seconds": 1.3145506128203124,
+          "decode_tokens_per_second": 89.76451636718348,
+          "total_tokens_per_second": 106.5002736559804,
+          "peak_gpu_memory_bytes": 277807616
         }
       ]
     },
@@ -267,103 +268,103 @@
         "run_count": 10,
         "prompt_tokens": 38,
         "median_generated_tokens": 44.5,
-        "median_latency_seconds": 0.6065459074961836,
-        "p95_latency_seconds": 1.2104960091979584,
-        "median_decode_tokens_per_second": 73.36427917244652,
-        "p95_decode_tokens_per_second": 74.04061951590634,
-        "median_total_tokens_per_second": 136.90360855875667,
-        "median_peak_gpu_memory_bytes": 271361280
+        "median_latency_seconds": 0.5024500294821337,
+        "p95_latency_seconds": 0.7697570881573483,
+        "median_decode_tokens_per_second": 88.3595017853131,
+        "p95_decode_tokens_per_second": 89.47903306146065,
+        "median_total_tokens_per_second": 164.26370237743112,
+        "median_peak_gpu_memory_bytes": 271360256
       },
       "runs": [
         {
           "run_index": 0,
           "prompt_tokens": 38,
-          "generated_tokens": 32,
-          "latency_seconds": 0.4403916349983774,
-          "decode_tokens_per_second": 72.6625972360213,
-          "total_tokens_per_second": 158.9494314537966,
-          "peak_gpu_memory_bytes": 270233600
+          "generated_tokens": 70,
+          "latency_seconds": 0.7950189739931375,
+          "decode_tokens_per_second": 88.04821304881742,
+          "total_tokens_per_second": 135.84581441817545,
+          "peak_gpu_memory_bytes": 274331648
         },
         {
           "run_index": 1,
           "prompt_tokens": 38,
-          "generated_tokens": 60,
-          "latency_seconds": 0.8146845360024599,
-          "decode_tokens_per_second": 73.64813906301866,
-          "total_tokens_per_second": 120.29196046959714,
-          "peak_gpu_memory_bytes": 273099264
+          "generated_tokens": 43,
+          "latency_seconds": 0.4866694728843868,
+          "decode_tokens_per_second": 88.3556549071141,
+          "total_tokens_per_second": 166.43739645293587,
+          "peak_gpu_memory_bytes": 271192064
         },
         {
           "run_index": 2,
           "prompt_tokens": 38,
-          "generated_tokens": 57,
-          "latency_seconds": 0.7731448260019533,
-          "decode_tokens_per_second": 73.72486768715179,
-          "total_tokens_per_second": 122.8747794785863,
-          "peak_gpu_memory_bytes": 272762880
+          "generated_tokens": 40,
+          "latency_seconds": 0.4526763709727675,
+          "decode_tokens_per_second": 88.3633486635121,
+          "total_tokens_per_second": 172.3085298938486,
+          "peak_gpu_memory_bytes": 270855680
         },
         {
           "run_index": 3,
           "prompt_tokens": 38,
-          "generated_tokens": 33,
-          "latency_seconds": 0.4533315360022243,
-          "decode_tokens_per_second": 72.79440625511234,
-          "total_tokens_per_second": 156.6182680034235,
-          "peak_gpu_memory_bytes": 270233600
+          "generated_tokens": 36,
+          "latency_seconds": 0.40892885508947074,
+          "decode_tokens_per_second": 88.03487343079141,
+          "total_tokens_per_second": 180.96057316329345,
+          "peak_gpu_memory_bytes": 270407168
         },
         {
           "run_index": 4,
           "prompt_tokens": 38,
-          "generated_tokens": 38,
-          "latency_seconds": 0.5195623510080623,
-          "decode_tokens_per_second": 73.13847881062179,
-          "total_tokens_per_second": 146.27695762124358,
-          "peak_gpu_memory_bytes": 270632448
+          "generated_tokens": 46,
+          "latency_seconds": 0.5182305860798806,
+          "decode_tokens_per_second": 88.76357597486442,
+          "total_tokens_per_second": 162.09000830192633,
+          "peak_gpu_memory_bytes": 271528448
         },
         {
           "run_index": 5,
           "prompt_tokens": 38,
-          "generated_tokens": 58,
-          "latency_seconds": 0.7867317540076328,
-          "decode_tokens_per_second": 73.72271387870953,
-          "total_tokens_per_second": 122.02380228200197,
-          "peak_gpu_memory_bytes": 272875008
+          "generated_tokens": 26,
+          "latency_seconds": 0.297972755972296,
+          "decode_tokens_per_second": 87.25629937260891,
+          "total_tokens_per_second": 214.78473691719117,
+          "peak_gpu_memory_bytes": 270233600
         },
         {
           "run_index": 6,
           "prompt_tokens": 38,
-          "generated_tokens": 33,
-          "latency_seconds": 0.4529015680018347,
-          "decode_tokens_per_second": 72.86351457247841,
-          "total_tokens_per_second": 156.76695559533232,
+          "generated_tokens": 27,
+          "latency_seconds": 0.3088920072186738,
+          "decode_tokens_per_second": 87.40918951938403,
+          "total_tokens_per_second": 210.42953032444302,
           "peak_gpu_memory_bytes": 270233600
         },
         {
           "run_index": 7,
           "prompt_tokens": 38,
-          "generated_tokens": 39,
-          "latency_seconds": 0.5336524079903029,
-          "decode_tokens_per_second": 73.08127803052784,
-          "total_tokens_per_second": 144.28867713719598,
-          "peak_gpu_memory_bytes": 270744576
+          "generated_tokens": 61,
+          "latency_seconds": 0.6812847210094333,
+          "decode_tokens_per_second": 89.53672101969153,
+          "total_tokens_per_second": 145.3136947696633,
+          "peak_gpu_memory_bytes": 273210368
         },
         {
           "run_index": 8,
           "prompt_tokens": 38,
-          "generated_tokens": 114,
-          "latency_seconds": 1.5343417599942768,
-          "decode_tokens_per_second": 74.29896192125099,
-          "total_tokens_per_second": 99.06528256166798,
-          "peak_gpu_memory_bytes": 279154688
+          "generated_tokens": 63,
+          "latency_seconds": 0.7046307900454849,
+          "decode_tokens_per_second": 89.40852555695623,
+          "total_tokens_per_second": 143.33747748019968,
+          "peak_gpu_memory_bytes": 273434624
         },
         {
           "run_index": 9,
           "prompt_tokens": 38,
-          "generated_tokens": 50,
-          "latency_seconds": 0.6794394070020644,
-          "decode_tokens_per_second": 73.59007953427123,
-          "total_tokens_per_second": 129.51853998031737,
-          "peak_gpu_memory_bytes": 271977984
+          "generated_tokens": 66,
+          "latency_seconds": 0.738881449913606,
+          "decode_tokens_per_second": 89.32420756769177,
+          "total_tokens_per_second": 140.7532967733325,
+          "peak_gpu_memory_bytes": 273771008
         }
       ]
     }
