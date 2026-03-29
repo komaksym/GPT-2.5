@@ -13,6 +13,7 @@ wheels/
 
 .ipynb_checkpoints
 .DS_Store
+.secrets.baseline
 
 wandb/
 
