@@ -19,6 +19,7 @@ ENV PATH="/root/.local/bin/:$PATH"
 # Then install packages in the venv
 COPY ./serving/uv.lock /code/uv.lock
 COPY ./serving/pyproject.toml /code/pyproject.toml
+
 RUN uv sync --frozen
 
 COPY ./serving/app /code/app
