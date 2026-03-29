@@ -1,7 +1,6 @@
 import argparse
 import functools
 import os
-import warnings
 from typing import Optional, Callable
 
 import numpy as np
@@ -30,8 +29,6 @@ from .model import (
     is_distributed,
     GPTConfig,
 )
-
-warnings.filterwarnings("ignore")
 
 temp_path = "checkpoints/mid_training_checkpoint"
 final_path = "checkpoints/final_checkpoint"
@@ -75,7 +72,7 @@ def run_evaluation(
     Returns a list of generated strings.
     """
     model.eval()
-    master_rank = True if rank == 0 else False
+    master_rank = rank == 0
 
     # Run validation
     val_inputs, val_labels = dataset_loader.next_batch()
@@ -146,7 +143,7 @@ def training_together(
     # Wandb init
     run = None  # For global scope
     pbar = None
-    master_rank = True if rank == 0 else False
+    master_rank = rank == 0
     if master_rank:
         run = wandb.init(project="gpt-2.5")
         config = run.config
@@ -167,9 +164,7 @@ def training_together(
             TRAINING_SET_DATA_CREATION_BATCH_SIZE
         )
         config.val_set_data_creation_batch_size = VAL_SET_DATA_CREATION_BATCH_SIZE
-        config.training_sampled_with_replacement = (
-            False if "train_set_loader" and "val_set_loader" in locals() else True
-        )
+        config.training_sampled_with_replacement = False
         config.num_gpus = dist.get_world_size()
         config.total_tokens_processed = (
             config.batch_size
@@ -410,7 +405,7 @@ def main() -> None:
             and dist.is_nccl_available()
         )
 
-        bfSixteen = MixedPrecision(
+        bf16_policy = MixedPrecision(
             param_dtype=torch.bfloat16,
             # Gradient communication precision.
             reduce_dtype=torch.bfloat16,
@@ -418,10 +413,7 @@ def main() -> None:
             buffer_dtype=torch.bfloat16,
         )
 
-        if bf16_ready:
-            mp_policy = bfSixteen
-        else:
-            mp_policy = None
+        mp_policy = bf16_policy if bf16_ready else None
 
     # Load the data
     train_data = hf_hub_download(

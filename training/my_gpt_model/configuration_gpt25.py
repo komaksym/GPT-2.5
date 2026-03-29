@@ -1,10 +1,7 @@
-from dataclasses import dataclass
-
 import torch
 from transformers import PretrainedConfig
 
 
-@dataclass
 class GPTConfig:
     context_length = 1024
     num_layers = 12

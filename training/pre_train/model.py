@@ -2,7 +2,6 @@ import math
 import os
 import typing
 from collections.abc import Callable
-from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Optional
 
@@ -982,7 +981,6 @@ class DataLoader:
         return x, y
 
 
-@dataclass
 class GPTConfig:
     context_length = 1024
     num_layers = 12
