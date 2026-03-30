@@ -1,160 +1,283 @@
-# 🚀 GPT-2.5 — A Modern Reproduction of GPT-2 (124M)
+# 🚀 GPT-2.5 — Full 124M LLM Stack
 
-A **from-scratch implementation** of GPT-2 124M with modern architectural improvements found in state-of-the-art LLMs like LLaMA and Gemma.
+A custom 124M GPT-style model stack that covers the full path from tokenizer work and base pretraining to instruction tuning, Hugging Face packaging, optimized inference, FastAPI serving, browser chat, and Docker deployment.
 
 [![Hugging Face](https://img.shields.io/badge/🤗%20Hugging%20Face-Dataset%20%26%20Checkpoints-blue)](https://huggingface.co/itskoma)
 
----
+<img src="images/main_page.png" alt="GPT-2.5 main page" width="100%">
+<img src="images/chat.png" alt="GPT-2.5 chat interface" width="100%">
 
 ## ✨ Highlights
 
-*   **Built from the ground up**: Every component—`Linear`, `Embedding`, `Softmax`—was implemented manually. Only `torch.nn.Parameter`, container classes (`Module`, `Sequential`), and `torch.optim.Optimizer` base class were used.
-*   **Custom BPE Tokenizer**: Trained a Byte Pair Encoding tokenizer from scratch.
-*   **Distributed Training**: Wrapped with FSDP for efficient multi-GPU training.
-*   **Flash Attention**: Leverages `torch.nn.functional.scaled_dot_product_attention` for optimized attention.
+- **End-to-end stack**: custom tokenizer code, base pretraining, post-training, HF-compatible packaging, optimized inference, API serving, SPA chat UI, and Docker.
+- **Modern 124M architecture**: GPT-2 scale with RMSNorm, SwiGLU, RoPE, AdamW, bias-free linears, and SDPA/FlashAttention support.
+- **Instruction tuning**: post-training recipe on `HuggingFaceTB/smol-smoltalk` for chat-style behavior.
+- **Hugging Face runtime package**: `training/my_gpt_model` exposes custom `AutoConfig` / `AutoModelForCausalLM` loading for published checkpoints.
+- **Serving stack**: `serving/app` ships a FastAPI app, browser chat UI, and inference runtime with optional `torch.compile`.
+- **Benchmarking and optimization**: checked-in inference benchmark artifacts document the current latency, throughput, and memory improvements.
 
----
 
 ## 🔧 Modern Architectural Changes
 
-This reproduction incorporates key improvements over the original GPT-2:
+| Feature             | Original GPT-2   | GPT-2.5 (This Repo) |
+| :------------------ | :--------------- | :------------------ |
+| **Normalization**   | LayerNorm (Post) | **RMSNorm (Pre)**   |
+| **Activation**      | GELU             | **SwiGLU**          |
+| **Positional Enc.** | Absolute         | **RoPE**            |
+| **Attention**       | Standard         | **SDPA / Flash**    |
+| **Optimizer**       | Adam             | **AdamW**           |
+| **Bias in Linears** | Yes              | **No**              |
+| **Dataset**         | WebText          | **FineWeb 10B**     |
 
-| Feature             | Original GPT-2       | GPT-2.5 (This Repo)           |
-| :------------------ | :------------------- | :---------------------------- |
-| **Normalization**   | LayerNorm (Post)     | **RMSNorm (Pre)**             |
-| **Activation**      | GELU                 | **SwiGLU**                    |
-| **Positional Enc.** | Absolute             | **RoPE**                      |
-| **Attention**       | Standard             | **Flash Attention**           |
-| **Optimizer**       | Adam                 | **AdamW**                     |
-| **Bias in Linears** | Yes                  | **No**                        |
-| **Dataset**         | WebText              | **FineWeb 10B**               |
+## 🧱 Current Stack Capabilities
 
----
+| Layer | Repo Path | What It Does |
+| :---- | :-------- | :----------- |
+| Tokenizer | `training/tokenizer/` | Custom BPE tokenizer implementation and training utilities |
+| Base training | `training/pre_train/` | Distributed pretraining run for the 124M base model |
+| Post-training | `training/post_train/` | Instruction tuning on `HuggingFaceTB/smol-smoltalk` plus local chat loop |
+| HF packaging | `training/my_gpt_model/` | Remote-code-compatible package for `AutoConfig` / `AutoModelForCausalLM` |
+| Serving | `serving/app/` | FastAPI API, inference runtime, static SPA assets |
+| Benchmarks | `serving/benchmark_inference.py` | Startup and steady-state inference benchmarking CLI |
+| Deployment | `Dockerfile` | GPU-ready serving image exposing port `8000` |
 
-## ⚙️ Hyperparameters
 
-| Parameter               | Value       |
-| :---------------------- | :---------- |
-| `batch_size`            | 32          |
-| `grad_accum_steps`      | 2           |
-| `tokens_per_step`       | 524,288     |
-| `total_tokens_processed`| ~42B        |
-| `training_steps`        | 80,000      |
-| `context_length`        | 1024        |
-| `num_layers`            | 12          |
-| `num_heads`             | 12          |
-| `d_model`               | 768         |
-| `d_ff`                  | 2048        |
-| `max_lr`                | 18e-4       |
-| `weight_decay`          | 0.1         |
-| `optimizer_betas`       | (0.9, 0.95) |
+## 📦 Artifact Split
 
----
+The repo now has two distinct artifact flows:
 
-## 🖥️ Hardware
+| Artifact | Default Repo | Role |
+| :------- | :----------- | :--- |
+| Dataset + checkpoints | `itskoma/GPT2.5` | FineWeb bins and the pretrained checkpoint used as the base for post-training, also includes port-training checkpoint |
+| Served / chat model | `itskoma/MyGPT` | Default post-trained Hugging Face model loaded by `post_train.chat` and `serving/app` |
 
-Trained on a cluster of **4x NVIDIA H100 SXM5 80GB** GPUs.
+`training/my_gpt_model/` is the HF runtime package that makes the published model repos loadable with `trust_remote_code=True`.
 
----
 
-## 📊 Results
+## 🏋️ Pretraining
 
-| Metric               | Score  |
-| :------------------- | :----- |
-| **Train Loss**       | ~3.2   |
-| **Validation Loss**  | ~3.12  |
-| **Perplexity**       | ~26.6  |
-| **HellaSwag Acc.**   | ~0.36  |
+### Recipe
 
-<img src="results.png" alt="Training Results Graph" width="800">
+| Parameter | Value |
+| :-------- | :---- |
+| `batch_size` | `128` |
+| `grad_accum_steps` | `1` |
+| `context_length` | `1024` |
+| `num_layers` | `12` |
+| `num_heads` | `12` |
+| `d_model` | `768` |
+| `d_ff` | `2048` |
+| `theta` | `10000` |
+| `lr` | `6e-4` |
+| `betas` | `(0.9, 0.95)` |
+| `weight_decay` | `0.1` |
+| `train_steps` | `20000` |
+| `num_gpus` | `4` |
 
-> **Note**: HellaSwag evaluation runs on a random mini-batch of the test evaluation dataset, which leads to a spikey curve like above.
+`tokens per step = 128 x 1 x 1024 x 4 = 524,288`
 
----
+`actual training budget = 524,288 x 20,000 = 10,485,760,000 tokens (~10.49B)`
 
-## 💬 Sample Generations
+### Latest Run Metrics
 
-**Prompt:** `"Once upon a time, "`
+| Metric | Score |
+| :----- | :---- |
+| `loss` | `3.1353` |
+| `val_loss` | `3.3041` |
+| `perplexity` | `22.9967` |
+| `HellaSwag` | `0.3059` |
 
-> *"Once upon a time, my brother-in-law and I would be all but broke and in debt. Let me say for the record, I was fully healthy in the summer of 2011 and we did just about everything we could to get a house together, start our..."*
 
-> *"Once upon a time, we have a chance to see the transformation of technology. It will not be so easy, as it may take many years for it to fully be implemented. We need to know the best ways to use this technology."*
+## 🧪 Post-Training
 
-> *"Once upon a time, many people thought that "the young" might be better off staying with the big, fancy houses. But that is not true. Young people are not allowed to live in luxury, with their parents, or with their families."*
+The instruction-tuning stage fine-tunes the pretrained base model on `HuggingFaceTB/smol-smoltalk` and installs the chat template / special tokens used by both the CLI chat loop and the serving stack.
 
-> *"Once upon a time, the fact that the Green Bay Packers used to be an underdog of the Super Bowl is a mystery, but it is now part of the legend of the Super Bowl. In 1986, the Green Bay Packers won the Super Bowl by beating the Seattle Seahawks..."*
+### Recipe
 
----
+| Parameter | Value |
+| :-------- | :---- |
+| Dataset | `HuggingFaceTB/smol-smoltalk` |
+| `num_train_epochs` | `3` |
+| `batch_size` | `8` |
+| `context_length` | `1024` |
+| `learning_rate` | `1e-5` |
+| `packing` | `true` |
+| `assistant_only_loss` | `true` |
+| `weight_decay` | `0` |
+| Precision | CUDA auto-selects `bf16` when supported, else `fp16` |
 
-## 🛠️ How to Run
+### Latest Run Metrics
 
-This project uses **`uv`** for dependency management.
+| Metric | Score |
+| :----- | :---- |
+| `eval/loss` | `2.8575` |
+| `eval/mean_token_accuracy` | `0.6508` |
+| `train/loss` | `2.8244` |
+| `train/global_step` | `30087` |
 
-### 1. 📥 Data Acquisition
+### Pre vs. Post Comparison
 
-Download the dataset (includes tokenized `.bin` files) and pre-trained checkpoints from Hugging Face:
+![Training evals](images/training_evals.png)
+
+Observations:
+
+- SmolSmoltalk loss and perplexity improve sharply after post-training.
+- General-knowledge multiple-choice accuracy stays roughly flat to slightly down.
+
+
+## ⚡ Inference Optimization
+
+The serving runtime defaults to:
+
+- on CUDA, inference uses `bf16` when available, otherwise `fp16`
+- `sdpa` as the default attention backend
+- optional `torch.compile(mode="max-autotune-no-cudagraphs")`
+
+The checked-in benchmark artifacts compare a pre-optimization runtime against the current serving path. The main improvements are in steady-state decode behavior rather than cached startup time.
+
+
+![Inference evals](images/inference_evals.png)
+Inference optimization leads to:
+
+-  About the same median generated tokens, lower p50 and p95 latency.
+- Increase in p50 and p95 decoded tokens per second and median total tokens per second.
+
+
+## 💬 Web App
+
+The current product-facing surface is the served chat app: FastAPI mounts the SPA at `GET /`, static assets under `/static`, and chat inference at `POST /chat`.
+
+<p align="center">
+  <img src="images/main_page.png" alt="GPT-2.5 main page" width="49%">
+  <img src="images/chat.png" alt="GPT-2.5 chat interface" width="49%">
+</p>
+
+
+## 🛠️ Quickstart
+
+This repo is split into two Python projects:
+
+- `training/` for tokenizer work, pretraining, post-training, and HF model packaging
+- `serving/` for the FastAPI app, browser UI, inference runtime, and benchmark CLI
+
+### Training
+
+Install the training environment:
 
 ```bash
-# Download Dataset
-uv run hf download itskoma/GPT2.5 --repo-type dataset --local-dir datasets
-
-# Download Checkpoints
-uv run hf download itskoma/GPT2.5 --repo-type model --local-dir checkpoints
+uv sync --project training
 ```
 
-### 2. 🔤 Tokenizer Training (Optional)
-
-To train the BPE tokenizer on your own data:
-
-1.  Prepare a raw text file (e.g., `data/fineweb.txt`).
-2.  Run the script:
-    ```bash
-    uv run python tokenizer/train_tokenizer.py
-    ```
-    > *Modify `input_path` and output paths in the script as needed.*
-
-### 3. 📄 Dataset Tokenization (Optional)
-
-If you downloaded the dataset in Step 1, you already have the tokenized files. For new data:
+Run the base pretraining entrypoint:
 
 ```bash
-uv run python data/src/tokenize_dataset.py
+uv run --project training torchrun --nproc_per_node 4 -m pre_train.train \
+  --batch_size 128 \
+  --grad_accum_steps 1 \
+  --context_length 1024 \
+  --num_layers 12 \
+  --d_model 768 \
+  --num_heads 12 \
+  --d_ff 2048 \
+  --theta 10000 \
+  --train_steps 20000 \
+  --lr 6e-4 \
+  --beta1 0.9 \
+  --beta2 0.95 \
+  --eps 1e-8 \
+  --weight_decay 0.1
 ```
-> *Adjust `input_path` and `final_output` in the script.*
 
-### 4. 🏋️ Training the Model
-
-#### ▶️ Training from Scratch
+Run the post-training recipe with the code defaults:
 
 ```bash
-uv run torchrun --nproc_per_node 4  -m pretrain.train \
-    --batch_size 32 \
-    --grad_accum_steps 2 \
-    --context_length 1024 \
-    --num_layers 12 \
-    --d_model 768 \
-    --num_heads 12 \
-    --d_ff 2048 \
-    --theta 10000 \
-    --train_steps 20000 \
-    --lr 6e-4 \
-    --beta1 0.9 \
-    --beta2 0.95 \
-    --eps 1e-8 \
-    --weight_decay 0.1
+uv run --project training python -m post_train.tune
 ```
 
-#### ⏸️ Resuming from Checkpoint
+Chat locally with the default served model repo (`itskoma/MyGPT`):
 
 ```bash
-uv run torchrun --nproc_per_node 4 -m pretrain.train \
-    --checkpoint checkpoints/final_checkpoint.pt \
-    --batch_size 32 \
-    # ... (other hyperparameters)
+uv run --project training python -m post_train.chat
 ```
-> *Ensure hyperparameters match the original training run.*
 
----
+Notes:
+
+- `pre_train.train` downloads `fineweb_train.bin` and `fineweb_test.bin` from `itskoma/GPT2.5`.
+- `post_train.tune` starts from the base checkpoint flow rooted at `itskoma/GPT2.5`.
+- Tokenizer code and local FineWeb preprocessing utilities live under `training/tokenizer/` and `training/data/src/`.
+
+### Serving
+
+Install the serving environment:
+
+```bash
+uv sync --project serving
+```
+
+Launch the FastAPI app and SPA:
+
+```bash
+uv run --project serving uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Enable the optimized compiled path explicitly:
+
+```bash
+MODEL_REPO_ID=itskoma/MyGPT \
+INFERENCE_USE_TORCH_COMPILE=1 \
+INFERENCE_TORCH_COMPILE_MODE=max-autotune-no-cudagraphs \
+INFERENCE_ATTENTION_BACKEND=sdpa \
+uv run --project serving uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Run the inference benchmark CLI from the repo root:
+
+```bash
+uv run --project serving python -m serving.benchmark_inference \
+  --repo-id itskoma/MyGPT \
+  --warmup-runs 3 \
+  --runs 10 \
+  --torch-compile \
+  --output evals/local_inference_benchmarks.json
+```
+
+
+## 🐳 Docker
+
+Build the serving image:
+
+```bash
+docker build -t gpt-2.5-serving .
+```
+
+Run the container with GPU exposure:
+
+```bash
+docker run --rm --gpus all -p 8000:8000
+```
+
+The container serves FastAPI on port `8000` and loads the Hugging Face model at startup.
+
+
+## 📡 Operational Interfaces
+
+### Entrypoints
+
+| Surface | Interface | Purpose |
+| :------ | :-------- | :------ |
+| Training | `pre_train.train` | Base pretraining entrypoint |
+| Training | `post_train.tune` | Instruction-tuning / post-training entrypoint |
+| Training | `post_train.chat` | Local interactive chat loop |
+| Serving | `app.main:app` | FastAPI ASGI app |
+| Benchmarking | `serving.benchmark_inference` | Inference benchmark CLI module |
+
+### HTTP
+
+| Method | Path | Purpose |
+| :----- | :--- | :------ |
+| `GET` | `/` | Serve the SPA shell |
+| `POST` | `/chat` | Run chat inference |
+
 
 ## 📜 License
 
